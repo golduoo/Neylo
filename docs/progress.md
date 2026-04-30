@@ -1,20 +1,26 @@
 # Neylo Implementation Progress
 
 Living changelog of what has been built. Phase numbering follows
-**`PLAN_v2.md` §12 推荐实现顺序** (the authoritative plan). Earlier
-drafts of this file used a different "Stage" numbering — that is
-deprecated.
+**`PLAN_v2.md` §12 推荐实现顺序** (the authoritative plan).
 
 ## Phase Overview
 
-| Phase | Scope                                              | Status        |
-| ----- | -------------------------------------------------- | ------------- |
-| 0     | 项目骨架: env, configs, Pydantic schemas, CLI     | ✅ Done       |
-| 1     | 最小闭环: YOLO + BoT-SORT + Parquet + annotated MP4 | ⏳ Pending    |
-| 2     | 数据与训练: 抽帧 / 伪标注 / CVAT / 训练 / 评估       | ⏳ Pending    |
-| 3     | Tracking 稳定性: CMC + ReID 调参 + tracklet 拼接     | ⏳ Pending    |
-| 4     | 批处理与评估: 多 clip + 长片段 + tracking metrics    | ⏳ Pending    |
-| 5     | 企业级扩展: Prefect + Postgres + MinIO + Docker      | ⏳ Pending    |
+| Phase | Scope                                              | Status      |
+| ----- | -------------------------------------------------- | ----------- |
+| 0     | 项目骨架: env, configs, Pydantic schemas, CLI       | ✅ Done     |
+| 1     | 最小闭环: YOLO + BoT-SORT + Parquet + annotated MP4 | ⏳ Next     |
+| 2     | 数据与训练: 抽帧 / 伪标注 / CVAT / 训练 / 评估       | ⏳ Pending  |
+| 3     | Tracking 稳定性: CMC + ReID 调参 + tracklet 拼接     | ⏳ Pending  |
+| 4     | 批处理与评估: 多 clip + 长片段 + tracking metrics    | ⏳ Pending  |
+| 5     | 企业级扩展: Prefect + Postgres + MinIO + Docker      | ⏳ Pending  |
+
+## Commit Timeline
+
+| Commit    | Phase | Summary                                                    |
+| --------- | ----- | ---------------------------------------------------------- |
+| `b128863` | 0     | Project skeleton: dirs, env, configs, gitignore, tests     |
+| `300900c` | 0     | Fix stale `PLAN.md` refs, env path, align to Phase numbers |
+| `eddc6e1` | 0     | Pydantic schemas + CLI skeleton (28 tests pass)            |
 
 ---
 
@@ -23,97 +29,68 @@ deprecated.
 **Goal (per PLAN_v2 §12):** `env/requirements.txt`, `configs/pipeline.yaml`,
 Pydantic schemas, and CLI skeleton.
 
-### ✅ Done
-
-#### Directory tree
-
-Matches the target shape in `AGENTS.md`:
+### Directory tree (current)
 
 ```text
 neylo/
 ├── AGENTS.md
 ├── PLAN_v2.md
-├── pyproject.toml
-├── .gitignore
+├── pyproject.toml             # neylo CLI entry point + pytest/ruff config
+├── .gitignore                 # excludes data/, models/, outputs/, .claude/
 ├── configs/
 │   └── pipeline.yaml
-├── data/                       # local-only, gitignored
+├── data/                      # local-only, gitignored
+├── docker/Dockerfile          # placeholder, finalized in Phase 5
 ├── docs/
 │   ├── decisions/architecture.md
 │   ├── requirements/{data,detection,evaluation,pipeline,tracking}.md
-│   └── progress.md             # this file
-├── docker/Dockerfile           # placeholder, finalized in Phase 5
+│   └── progress.md            # this file
 ├── env/
-│   ├── environment.yml
+│   ├── environment.yml        # name: cv_env, torch excluded
 │   └── requirements.txt
 ├── neylo/
-│   ├── __init__.py
+│   ├── __init__.py            # __version__ = "0.1.0"
+│   ├── cli/
+│   │   ├── __init__.py
+│   │   └── main.py            # `neylo run` / `run-batch` (stub)
 │   ├── pipeline/__init__.py
-│   ├── schemas/__init__.py     # empty — to be filled in Phase 0
+│   ├── schemas/
+│   │   ├── __init__.py        # re-exports all models
+│   │   ├── common.py          # BBox, ClassName
+│   │   ├── video.py           # VideoAsset, VideoSegment, FrameInfo
+│   │   ├── detection.py       # DetectionRecord
+│   │   ├── track.py           # TrackRecord
+│   │   └── run.py             # StageStatus, StageRun, PipelineRun
 │   ├── services/
 │   │   ├── detection/__init__.py
 │   │   └── tracking/__init__.py
 │   └── evaluation/__init__.py
 └── tests/
-    ├── conftest.py
-    └── test_skeleton.py
+    ├── conftest.py            # project_root / configs_dir / data_dir fixtures
+    ├── test_skeleton.py       # 3 tests: package + config + subpackages
+    ├── test_schemas.py        # 20 tests: validation, JSON round-trip, enums
+    └── test_cli.py            # 5 tests: CLI parsing + stub behavior
 ```
 
-#### Key files
-
-- `env/environment.yml` — Conda env (Python 3.11, ffmpeg, pip layer).
-  Pip section uses `-r env/requirements.txt` (repo-root-relative; assumes
-  `conda env create -f env/environment.yml` is run from repo root).
-- `env/requirements.txt` — pinned core deps:
-  `ultralytics`, `sahi`, `torchreid`, `supervision`, `prefect`, `pyarrow`,
-  `pandas`, `numpy`, `opencv-python`, `pydantic>=2.9`, `pyyaml`, `loguru`,
-  `tqdm`, `pytest`, `pytest-cov`.
-- `configs/pipeline.yaml` — central tunables; sections:
-  `paths`, `ingest`, `decode`, `detection` (incl. SAHI), `tracking`
-  (BoT-SORT + ReID + CMC + offline stitching), `export`, `runtime`.
-- `pyproject.toml` — package metadata (`requires-python = ">=3.11"`),
-  pytest config, ruff config.
-- `.gitignore` — Python artifacts, model weights, `runs/`, `outputs/`,
-  entire `data/` directory, `.claude/`.
-- `docker/Dockerfile` — placeholder targeting CUDA 12.4 + ffmpeg + RTX
-  5090 (finalized in Phase 5).
-- `tests/conftest.py` — exposes `project_root`, `configs_dir`, `data_dir`
-  fixtures.
-- `tests/test_skeleton.py` — verifies package imports, subpackages
-  exist, `pipeline.yaml` parses with all required top-level keys.
-
-#### Conventions established
-
-- Python ≥ 3.11. **Do not run on system 3.12.7** — use the conda env.
-- Module boundary: `pipeline` orchestrates; `services/{detection,tracking}`
-  hold the CV logic; `schemas` owns Pydantic data contracts; `evaluation`
-  hosts metrics. No cross-imports between sibling services.
-- Config read from `configs/pipeline.yaml`; no values hardcoded in code.
-- Outputs land under `outputs/` (gitignored). Models under `models/`
-  (gitignored).
-- Pytest markers: `smoke` (sample-video end-to-end), `slow` (GPU/large
-  fixtures).
-
-### ✅ Pydantic v2 schemas
+### Pydantic v2 schemas
 
 Modules in `neylo/schemas/`, all re-exported from the package root:
 
 - `common.py` — `BBox` (frozen, with `width`/`height`/`area` and order
   validation), `ClassName` enum (`player`, `goalkeeper`, `referee`)
 - `video.py` — `VideoAsset`, `VideoSegment`, `FrameInfo`
-- `detection.py` — `DetectionRecord` (PLAN_v2 §6.1: video/segment/frame
-  ids, timestamp, class, conf, x1/y1/x2/y2, detector_name, model_version)
-- `track.py` — `TrackRecord` (PLAN_v2 §6.2: adds track_id,
-  source_track_id, optional stitched_track_id, tracker_name)
+- `detection.py` — `DetectionRecord` per PLAN_v2 §6.1
+  (video/segment/frame ids, timestamp, class, conf, x1/y1/x2/y2,
+  detector_name, model_version)
+- `track.py` — `TrackRecord` per PLAN_v2 §6.2 (adds `track_id`,
+  `source_track_id`, optional `stitched_track_id`, `tracker_name`)
 - `run.py` — `StageStatus` enum, `StageRun` (idempotency key:
-  video_id/segment_id/stage_name/config_hash/model_version),
+  `video_id/segment_id/stage_name/config_hash/model_version`),
   `PipelineRun`
 
 All models use `ConfigDict(extra="forbid")` so unknown fields fail loudly.
-Tests in `tests/test_schemas.py` cover bbox validation, conf bounds, enum
-coercion, JSON round-trip, and unknown-field rejection.
 
-### ✅ CLI skeleton
+### CLI skeleton
 
 `neylo/cli/main.py` with stdlib `argparse` (no extra deps), wired in
 `pyproject.toml` as `[project.scripts] neylo = "neylo.cli.main:app"`.
@@ -123,48 +100,66 @@ coercion, JSON round-trip, and unknown-field rejection.
 - `neylo --version`
 
 Phase 0 stubs only validate inputs and echo the planned stage chain;
-real detect/track wiring lands in Phase 1. Tests in `tests/test_cli.py`
-cover argument parsing, missing-input error path, and batch discovery.
+real detect/track wiring lands in Phase 1.
+
+### Conventions established
+
+- Python 3.11 inside conda env `cv_env`. **Do not run on system
+  Python 3.12.7.**
+- PyTorch is manually installed (`torch 2.11.0+cu130`, RTX 5090 CUDA
+  build). `requirements.txt` intentionally does not pin `torch`.
+- Module boundary: `pipeline` orchestrates; `services/{detection,tracking}`
+  hold the CV logic; `schemas` owns Pydantic data contracts; `evaluation`
+  hosts metrics. No cross-imports between sibling services.
+- Config read from `configs/pipeline.yaml`; no values hardcoded in code.
+- Outputs land under `outputs/` (gitignored). Models under `models/`
+  (gitignored).
+- Pytest markers: `smoke` (sample-video end-to-end), `slow` (GPU/large
+  fixtures).
 
 ### Open items / deferred
 
-- **Conda env `cv_env` is created** with Python 3.11 and a manually
-  installed GPU-matched PyTorch (`torch 2.11.0+cu130`,
-  `torch.cuda.is_available() == True` on RTX 5090). All project work
-  runs inside `cv_env`; do **not** use system Python 3.12.7.
-  Project deps install with `pip install -r env/requirements.txt`
-  followed by `pip install -e .` from the repo root. `requirements.txt`
-  intentionally does not pin `torch` so the manual CUDA-matched build
-  stays in place.
-- `models/` directory not created yet; will be added when Phase 1 needs
-  YOLO11 weights.
-- `configs/botsort.yaml` is referenced by `pipeline.yaml`
-  (`tracking.config_path`) but not written yet. Must be created when
-  tracker integration starts (Phase 1 / Phase 3) — until then any code
-  path that loads the tracker config will fail. Treated as a known
+- **`models/` directory not created yet.** Will be added when Phase 1
+  step 1.2 needs YOLO11 weights (downloaded by ultralytics on first
+  run).
+- **`configs/botsort.yaml` is referenced by `pipeline.yaml`
+  (`tracking.config_path`) but not written yet.** Must be created in
+  Phase 1 step 1.3 (tracking integration). Until then any code path
+  that loads the tracker config will fail. Treated as a known
   entry-cost.
 
-### Verification
-
-Once a Conda env is created and deps installed:
+### Verification (run inside `cv_env`)
 
 ```bash
 conda activate cv_env
 pip install -r env/requirements.txt
 pip install -e .
-pytest tests/test_skeleton.py -v
+pytest -v
+neylo --version
 ```
 
-Expected: 3 passing tests (package importable, config loads, subpackages
-present). Schema and CLI tests will be added as the remaining Phase 0
-work lands.
+Expected: **28 tests pass** (3 skeleton + 20 schemas + 5 CLI),
+and `neylo --version` prints `neylo 0.1.0`.
 
 ---
 
-## Phase 1 — 最小闭环 (next, after Phase 0 schemas + CLI)
+## Phase 1 — 最小闭环 (next)
 
-End-to-end shortest path:
+End-to-end shortest path on a single 10–20 s clip:
+**ingest → decode → detect → track → export**.
 
-- input single video → YOLO inference → BoT-SORT tracking → Parquet +
-  annotated MP4
-- run on a 10–20 s sample clip to confirm shape and frame coverage
+Planned breakdown (each step independently runnable + testable):
+
+| Step | Scope                                                                | Output                                       |
+| ---- | -------------------------------------------------------------------- | -------------------------------------------- |
+| 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV/ffmpeg)  | `VideoAsset` + `FrameInfo` stream            |
+| 1.2  | Detection service: ultralytics YOLO11 wrapper                        | `DetectionRecord[]` per frame                |
+| 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`   | `TrackRecord[]` per frame                    |
+| 1.4  | Export: pyarrow Parquet writer + supervision MP4 annotator           | `outputs/<video_id>/{tracks.parquet,vis.mp4}`|
+| 1.5  | CLI wiring: replace `neylo run` stub with the 1.1–1.4 chain          | working `neylo run --input <clip>`           |
+| 1.6  | Smoke test on a real Veo highlight clip from `data/`                 | acceptance: ≥99% frame coverage, MP4 plays   |
+
+Phase 1 entry-costs:
+
+- YOLO11 weights download (~40–250 MB, into `models/`, gitignored)
+- Write `configs/botsort.yaml` (BoT-SORT params, ReID + CMC toggles)
