@@ -8,4 +8,5 @@ dependencies:
   - pip
   - ffmpeg
   - pip:
-      - -r requirements.txt
+      # pip resolves -r relative to CWD; assume conda is run from repo root.
+      - -r env/requirements.txt

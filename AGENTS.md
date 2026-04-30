@@ -53,7 +53,7 @@ Expected project shape:
 ```text
 neylo/
 ├── AGENTS.md
-├── PLAN.md
+├── PLAN_v2.md
 ├── configs/
 │   └── pipeline.yaml
 ├── data/
