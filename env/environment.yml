@@ -1,4 +1,4 @@
-name: neylo
+name: cv_env
 channels:
   - pytorch
   - nvidia
@@ -7,6 +7,10 @@ dependencies:
   - python=3.11
   - pip
   - ffmpeg
+  # NOTE: torch / torchvision / torchaudio are intentionally NOT listed
+  # here. They are installed manually with a CUDA-matched build (current
+  # workstation: torch 2.11.0+cu130 on RTX 5090). Letting conda manage
+  # torch alongside a manually pinned CUDA causes index/wheel conflicts.
   - pip:
       # pip resolves -r relative to CWD; assume conda is run from repo root.
       - -r env/requirements.txt

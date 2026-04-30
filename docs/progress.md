@@ -9,7 +9,7 @@ deprecated.
 
 | Phase | Scope                                              | Status        |
 | ----- | -------------------------------------------------- | ------------- |
-| 0     | 项目骨架: env, configs, Pydantic schemas, CLI     | 🟡 In progress |
+| 0     | 项目骨架: env, configs, Pydantic schemas, CLI     | ✅ Done       |
 | 1     | 最小闭环: YOLO + BoT-SORT + Parquet + annotated MP4 | ⏳ Pending    |
 | 2     | 数据与训练: 抽帧 / 伪标注 / CVAT / 训练 / 评估       | ⏳ Pending    |
 | 3     | Tracking 稳定性: CMC + ReID 调参 + tracklet 拼接     | ⏳ Pending    |
@@ -18,7 +18,7 @@ deprecated.
 
 ---
 
-## Phase 0 — 项目骨架 (in progress)
+## Phase 0 — 项目骨架 (done)
 
 **Goal (per PLAN_v2 §12):** `env/requirements.txt`, `configs/pipeline.yaml`,
 Pydantic schemas, and CLI skeleton.
@@ -94,28 +94,48 @@ neylo/
 - Pytest markers: `smoke` (sample-video end-to-end), `slow` (GPU/large
   fixtures).
 
-### 🟡 Remaining for Phase 0
+### ✅ Pydantic v2 schemas
 
-- **Pydantic schemas** in `neylo/schemas/`: `DetectionRecord`,
-  `TrackRecord`, plus support models per `PLAN_v2 §6` and
-  `docs/requirements/pipeline.md` (`VideoAsset`, `VideoSegment`,
-  `FrameInfo`, `StageRun`, `PipelineRun`).
-  Must include validation tests.
-- **CLI skeleton** under `neylo/cli/` (or `neylo/__main__.py`) with the
-  v1 entry points from `PLAN_v2 §9.1`:
-  - `neylo run --input <video> --config configs/pipeline.yaml`
-  - `neylo run-batch --input-dir <dir> --config configs/pipeline.yaml`
+Modules in `neylo/schemas/`, all re-exported from the package root:
 
-  At Phase 0 these can wire stages as no-ops or dry-run prints — actual
-  detect/track logic lands in Phase 1.
+- `common.py` — `BBox` (frozen, with `width`/`height`/`area` and order
+  validation), `ClassName` enum (`player`, `goalkeeper`, `referee`)
+- `video.py` — `VideoAsset`, `VideoSegment`, `FrameInfo`
+- `detection.py` — `DetectionRecord` (PLAN_v2 §6.1: video/segment/frame
+  ids, timestamp, class, conf, x1/y1/x2/y2, detector_name, model_version)
+- `track.py` — `TrackRecord` (PLAN_v2 §6.2: adds track_id,
+  source_track_id, optional stitched_track_id, tracker_name)
+- `run.py` — `StageStatus` enum, `StageRun` (idempotency key:
+  video_id/segment_id/stage_name/config_hash/model_version),
+  `PipelineRun`
+
+All models use `ConfigDict(extra="forbid")` so unknown fields fail loudly.
+Tests in `tests/test_schemas.py` cover bbox validation, conf bounds, enum
+coercion, JSON round-trip, and unknown-field rejection.
+
+### ✅ CLI skeleton
+
+`neylo/cli/main.py` with stdlib `argparse` (no extra deps), wired in
+`pyproject.toml` as `[project.scripts] neylo = "neylo.cli.main:app"`.
+
+- `neylo run --input <video> [--config configs/pipeline.yaml]`
+- `neylo run-batch --input-dir <dir> [--config configs/pipeline.yaml]`
+- `neylo --version`
+
+Phase 0 stubs only validate inputs and echo the planned stage chain;
+real detect/track wiring lands in Phase 1. Tests in `tests/test_cli.py`
+cover argument parsing, missing-input error path, and batch discovery.
 
 ### Open items / deferred
 
-- **Conda env not yet created.** Once Phase 0 schema work starts, run
-  `conda env create -f env/environment.yml && conda activate neylo` and
-  verify `python --version` reports 3.11. The system Python on this
-  machine is 3.12.7 — do **not** rely on it for Phase 0 schema/CLI work
-  or anything later.
+- **Conda env `cv_env` is created** with Python 3.11 and a manually
+  installed GPU-matched PyTorch (`torch 2.11.0+cu130`,
+  `torch.cuda.is_available() == True` on RTX 5090). All project work
+  runs inside `cv_env`; do **not** use system Python 3.12.7.
+  Project deps install with `pip install -r env/requirements.txt`
+  followed by `pip install -e .` from the repo root. `requirements.txt`
+  intentionally does not pin `torch` so the manual CUDA-matched build
+  stays in place.
 - `models/` directory not created yet; will be added when Phase 1 needs
   YOLO11 weights.
 - `configs/botsort.yaml` is referenced by `pipeline.yaml`
@@ -129,8 +149,8 @@ neylo/
 Once a Conda env is created and deps installed:
 
 ```bash
-conda env create -f env/environment.yml
-conda activate neylo
+conda activate cv_env
+pip install -r env/requirements.txt
 pip install -e .
 pytest tests/test_skeleton.py -v
 ```
