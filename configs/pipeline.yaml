@@ -1,0 +1,61 @@
+# Neylo pipeline configuration (v1)
+# Centralizes tunables for the offline batch pipeline:
+# ingest -> decode/segment -> detect -> track -> export
+
+paths:
+  data_root: data
+  output_root: outputs
+  models_root: models
+
+ingest:
+  video_extensions: [".mp4", ".mov", ".mkv"]
+
+decode:
+  segment_seconds: 90
+  fps: null            # null = use source fps
+  backend: ffmpeg      # ffmpeg | nvdec (nvdec deferred)
+
+detection:
+  model_path: models/yolo11x.pt
+  classes: [player, goalkeeper, referee]
+  imgsz: 1280
+  conf: 0.25
+  iou: 0.6
+  device: cuda:0
+  half: true
+  sahi:
+    enabled: false
+    slice_height: 640
+    slice_width: 640
+    overlap_height_ratio: 0.2
+    overlap_width_ratio: 0.2
+
+tracking:
+  tracker: botsort      # botsort
+  config_path: configs/botsort.yaml
+  reid:
+    enabled: true
+    model: osnet_x1_0
+    weights: null
+  cmc:
+    enabled: true
+    method: sparseOptFlow
+  stitching:
+    enabled: true
+    max_gap_frames: 60
+    appearance_threshold: 0.3
+
+export:
+  parquet:
+    compression: snappy
+  video:
+    enabled: true
+    draw_track_id: true
+    draw_class: true
+    draw_conf: true
+    thickness: 2
+
+runtime:
+  device: cuda:0
+  num_workers: 4
+  log_level: INFO

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neylo"
+version = "0.1.0"
+description = "Neylo computer vision subsystem for outdoor 11-a-side football video analysis"
+requires-python = ">=3.11"
+readme = "AGENTS.md"
+
+[tool.setuptools.packages.find]
+include = ["neylo*"]
+exclude = ["tests*", "data*", "docs*", "configs*", "docker*", "env*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "smoke: end-to-end smoke tests on sample videos",
+    "slow: tests that require GPU or large fixtures",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

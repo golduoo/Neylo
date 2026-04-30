@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Envs
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project artifacts
+outputs/
+models/
+*.pt
+*.onnx
+*.engine
+runs/
+
+# Data — local-only, never committed
+data/
+
+# Logs
+logs/
+*.log

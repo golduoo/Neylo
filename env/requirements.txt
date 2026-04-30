@@ -1,0 +1,26 @@
+# Core CV
+ultralytics>=8.3.0
+sahi>=0.11.18
+torchreid>=0.2.5
+supervision>=0.25.0
+
+# Pipeline orchestration
+prefect>=3.0.0
+
+# Data
+pyarrow>=17.0.0
+pandas>=2.2.0
+numpy>=1.26.0
+opencv-python>=4.10.0
+
+# Schemas / config
+pydantic>=2.9.0
+pyyaml>=6.0.2
+
+# Logging / utils
+loguru>=0.7.2
+tqdm>=4.66.0
+
+# Testing
+pytest>=8.3.0
+pytest-cov>=5.0.0
