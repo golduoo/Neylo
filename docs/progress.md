@@ -21,6 +21,8 @@ Living changelog of what has been built. Phase numbering follows
 | `b128863` | 0     | Project skeleton: dirs, env, configs, gitignore, tests     |
 | `300900c` | 0     | Fix stale `PLAN.md` refs, env path, align to Phase numbers |
 | `eddc6e1` | 0     | Pydantic schemas + CLI skeleton (28 tests pass)            |
+| `b603776` | 0     | Update progress.md with current state and Phase 1 plan     |
+| _next_    | 1.1   | Ingest + Decode (probe_video, FrameStream) — 39 tests pass |
 
 ---
 
@@ -143,7 +145,33 @@ and `neylo --version` prints `neylo 0.1.0`.
 
 ---
 
-## Phase 1 — 最小闭环 (next)
+## Phase 1 — 最小闭环 (in progress)
+
+### ✅ 1.1 Ingest + Decode
+
+`neylo/pipeline/ingest.py`:
+
+- `probe_video(path) → VideoAsset` — uses `cv2.VideoCapture` to read
+  fps / width / height / frame count, fails loudly on bad metadata
+- `discover_videos(root, extensions) → list[Path]` — recursive scan,
+  sorted, filtered by extension
+- `make_video_id(path)` — slug from filename stem
+  (`"01 001124_-_Shot_on_goal.mp4"` → `"01_001124_shot_on_goal"`)
+
+`neylo/pipeline/decode.py`:
+
+- `single_segment(asset) → VideoSegment` — Phase 1 treats whole video
+  as one segment; real 1–2 minute segmentation deferred to Phase 4
+- `FrameStream(asset, segment)` — context manager iterating
+  `(bgr_ndarray, FrameInfo)`. Validates video_id match between asset
+  and segment, releases `cv2.VideoCapture` on exit, refuses use
+  outside `with` block.
+
+Tests in `tests/test_ingest.py` (6) and `tests/test_decode.py` (5) use
+a synthetic `cv2.VideoWriter` mp4 fixture (no dependency on `data/`).
+Total project test count: **39 pass**.
+
+
 
 End-to-end shortest path on a single 10–20 s clip:
 **ingest → decode → detect → track → export**.
@@ -152,7 +180,7 @@ Planned breakdown (each step independently runnable + testable):
 
 | Step | Scope                                                                | Output                                       |
 | ---- | -------------------------------------------------------------------- | -------------------------------------------- |
-| 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV/ffmpeg)  | `VideoAsset` + `FrameInfo` stream            |
+| 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅      | `VideoAsset` + `FrameInfo` stream            |
 | 1.2  | Detection service: ultralytics YOLO11 wrapper                        | `DetectionRecord[]` per frame                |
 | 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`   | `TrackRecord[]` per frame                    |
 | 1.4  | Export: pyarrow Parquet writer + supervision MP4 annotator           | `outputs/<video_id>/{tracks.parquet,vis.mp4}`|
