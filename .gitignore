@@ -37,3 +37,15 @@ data/
 # Logs
 logs/
 *.log
+
+# Frontend (web/) — see Phase 3
+web/node_modules/
+web/dist/
+web/.vite/
+web/coverage/
+web/.env.local
+web/.env.development.local
+web/.env.production.local
+
+# Backend uploads (FastAPI) — see Phase 2
+uploads/

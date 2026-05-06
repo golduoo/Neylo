@@ -51,7 +51,8 @@ def test_bbox_frozen():
 
 def test_class_name_values():
     assert ClassName.PLAYER == "player"
-    assert {c.value for c in ClassName} == {"player", "goalkeeper", "referee"}
+    # v1 is single-class. See ClassName docstring.
+    assert {c.value for c in ClassName} == {"player"}
 
 
 # ---------- DetectionRecord ----------
@@ -92,13 +93,14 @@ def test_detection_conf_bounds(conf):
 
 def test_detection_class_name_string_coercion():
     # str values in the enum should validate
-    d = DetectionRecord(**_det_kwargs(class_name="goalkeeper"))
-    assert d.class_name == ClassName.GOALKEEPER
+    d = DetectionRecord(**_det_kwargs(class_name="player"))
+    assert d.class_name == ClassName.PLAYER
 
 
-def test_detection_rejects_unknown_class():
+@pytest.mark.parametrize("bad", ["goalkeeper", "referee", "ball", "person"])
+def test_detection_rejects_unknown_class(bad):
     with pytest.raises(ValidationError):
-        DetectionRecord(**_det_kwargs(class_name="ball"))
+        DetectionRecord(**_det_kwargs(class_name=bad))
 
 
 # ---------- TrackRecord ----------

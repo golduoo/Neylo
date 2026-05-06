@@ -21,7 +21,9 @@ detection:
   # is enabled. Bare names like "yolo11n.pt" trigger ultralytics auto-
   # download; pre-stage weights into `models/` and use a path to avoid it.
   model_path: yolo11n.pt
-  classes: [player, goalkeeper, referee]
+  # v1: single class. Goalkeeper / referee data is too sparse to train
+  # reliably; ball is deferred to v2. See PLAN_v2 §3.
+  classes: [player]
   imgsz: 1280
   conf: 0.25
   iou: 0.6

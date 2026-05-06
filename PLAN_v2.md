@@ -19,46 +19,53 @@ v2 相比原计划的主要变化：
 
 ### 2.1 必须交付
 
-v1 只做三件事：
+v1 是一个面向用户的交互式视频复盘 web 应用，由四部分组成：
 
-1. **Detection**  
-   每帧检测：
-   - `player`
-   - `goalkeeper`
-   - `referee`
+1. **CV 流水线（核心）**
+   - Detection：单类 `player`（数据驱动决定，见 §3）
+   - Tracking：连续可见片段内稳定的 `track_id`（BoT-SORT + ReID + CMC）
+   - 每帧 + 每 track 的结构化数据落 Parquet + 索引
 
-2. **Tracking**  
-   对场上人员进行跨帧关联，输出连续片段内稳定的 `track_id`。
+2. **Backend API（FastAPI）** — 见 `docs/requirements/api.md`
+   - 上传视频、查询任务状态
+   - 查询任意帧的检测结果
+   - 查询某个 track_id 在整段视频中的轨迹
 
-3. **Export**  
-   输出：
-   - 标注视频：bbox + class + track_id
-   - Parquet：每帧结构化 tracking 数据
+3. **Frontend Web UI**（Vite + React + TS + Tailwind + shadcn/ui）— 见 `docs/requirements/ui.md`
+   - 上传视频
+   - 拖动进度条到任一帧 → 显示该帧所有检测框
+   - 点击某个框 → 选中该球员的 track
+   - 播放视频时，被选中的 track 高亮跟随；其他检测框可一键隐藏
+
+4. **CLI**（保留作为非 UI 入口）
+   - `neylo run --input <video>` 执行同样的流水线，产出同样的 Parquet/索引，不依赖 UI
 
 ### 2.2 v1 成功标准
 
-v1 不追求整场比赛、长时间离屏后的绝对身份一致。  
+v1 不追求整场比赛、长时间离屏后的绝对身份一致。
 v1 的目标是：
 
 ```text
 在连续可见片段内稳定保持 track_id；
 短时遮挡和相机 pan/tilt 后尽量恢复；
-长时间离屏后不强制保持同一 ID。
+长时间离屏后不强制保持同一 ID；
+UI 上能稳定完成"上传 → 选人 → 跟随播放"的完整闭环。
 ```
 
 ### 2.3 v1 不做
 
 以下内容全部放入 Future Work：
 
-- ball detection / ball tracking
-- 球场单应矩阵
-- 鸟瞰图
-- 真实世界坐标
+- 多类检测（goalkeeper / referee / ball）
+- 球场单应矩阵 / 鸟瞰图 / 真实世界坐标
 - 速度、距离、热区
 - 传球、射门、进球等事件检测
 - 球队识别
 - 跨场 ReID
-- 实时直播处理
+- 直播 / 实时推流 / 边上传边推理（架构是"上传 → 离线预处理 → 前端渲染"）
+- 多用户、登录、会话保存
+- 移动端布局
+- 模型训练（v1 用 COCO 预训练 + 后续单类微调，微调本身在 Phase 4）
 
 ---
 
@@ -106,6 +113,22 @@ Neylo Veo 数据用于：
 原因：
 
 - tracking 稳定性高度依赖真实部署视频的画质、压缩、Veo pan/tilt、遮挡方式和球衣相似度。
+
+### 3.5 标签合并（v1 决策）
+
+当前 train 集标签分布：
+
+| 原标签 | 实例数 | v1 处理 |
+| --- | --- | --- |
+| player-white | 41418 | → `player` |
+| ball | 2110 | 丢弃（v2 单独的小目标模型） |
+| another-player | 131 | → `player` |
+| Keeper | 33 | → `player` |
+| referee | 16 | 丢弃 |
+
+合并理由：keeper + referee + another-player 合计 180 条实例，远不足以训练区分能力，强行多类只会让模型对稀有类过拟合或低置信。v1 用单类 `player`，所有"场上人员"统一为 player；ball 在 v2 用 SAHI + 专用模型处理；referee 等比赛角色识别推迟。
+
+对应代码：`neylo.schemas.ClassName` 已收敛到 `PLAYER` 单值；`build_class_map` 简化为只查 `player` 名字（COCO 预训练时回退到 `person → player`）。
 
 ### 3.4 数据请求
 
@@ -381,17 +404,26 @@ v1 加分项，不阻塞 baseline。
 
 ### 9.1 v1 入口
 
-建议先做 CLI：
+两个入口，共享同一个核心库：
+
+**CLI（先做，作为非 UI 入口长期保留）：**
 
 ```bash
 neylo run --input data/raw/match_001/clip_001.mp4 --config configs/pipeline.yaml
-```
-
-批处理：
-
-```bash
 neylo run-batch --input-dir data/raw/match_001 --config configs/pipeline.yaml
 ```
+
+**Backend API（FastAPI，详见 `docs/requirements/api.md`）：**
+
+```bash
+uvicorn neylo.api.main:app --reload
+# POST /api/v1/jobs           上传视频 -> { job_id }
+# GET  /api/v1/jobs/{job_id}   轮询任务状态与进度
+# GET  /api/v1/jobs/{id}/frames/{frame_id}
+# GET  /api/v1/jobs/{id}/tracks/{track_id}
+```
+
+CLI 和 API 都最终调用同一个 pipeline 函数；区别只在调用上下文（一次性 vs 异步任务）。
 
 ### 9.2 Stage 设计
 
@@ -542,6 +574,8 @@ Milestone 3：Long Segment Tracking
 
 ## 12. 推荐实现顺序
 
+> 当前实施进度的"实时状态"在 `docs/progress.md`，下面是计划侧的权威清单。
+
 ### Phase 0：项目骨架
 
 - 创建 `env/requirements.txt`
@@ -549,43 +583,63 @@ Milestone 3：Long Segment Tracking
 - 创建 Pydantic schemas
 - 创建 CLI skeleton
 
-### Phase 1：最小闭环
+### Phase 1：CLI 最小闭环（核心 CV 流水线）
 
 - 输入单个视频
-- YOLO inference
+- YOLO inference（v1 单类 player）
 - BoT-SORT tracking
-- 导出 Parquet
-- 导出 annotated MP4
+- 导出 Parquet（detections + tracks）
+- 导出 track_index.json，供后续 API 查询使用
+- annotated MP4 改为可选导出（CLI 通过 flag 启用，UI 直接渲染原视频 + overlay，不依赖标注 MP4）
 
-### Phase 2：数据与训练
+### Phase 2：Backend API（FastAPI）
+
+- `neylo/api/` 下建立 FastAPI app
+- 端点：`POST /api/v1/jobs`、`GET /api/v1/jobs/{id}`、`GET /api/v1/jobs/{id}/frames/{frame_id}`、`GET /api/v1/jobs/{id}/tracks/{track_id}`、`GET /api/v1/jobs/{id}/video`
+- 单进程 background task：上传后异步跑 Phase 1 流水线，写入 `outputs/<job_id>/`
+- 模型在 startup 时加载并复用
+- 见 `docs/requirements/api.md`
+
+### Phase 3：Frontend Web UI（Vite + React + TS + Tailwind + shadcn/ui）
+
+- `web/` 独立子目录，独立 `package.json`
+- 状态机：idle → uploading → processing → ready
+- 关键交互：scrub → 拉取该帧检测；点击 bbox → 选中 track；play → overlay 跟随当前帧
+- 使用 `requestVideoFrameCallback` 做帧级同步
+- 见 `docs/requirements/ui.md`
+
+### Phase 4：数据与训练
 
 - 抽帧
 - 去重
 - 伪标注
 - CVAT 修正
-- 公开数据 + Neylo 数据训练
+- 单类 player 微调（公开数据 + Neylo 数据）
 - 模型评估
+- 微调权重替换 `configs/pipeline.yaml` 中 `detection.model_path`，`build_class_map` 自动识别
 
-### Phase 3：tracking 稳定性
+### Phase 5：Tracking 稳定性
 
 - CMC 调参
 - ReID 调参
 - debug visualization
 - tracklet stitching prototype
 
-### Phase 4：批处理与评估
+### Phase 6：批处理与评估
 
 - 多 clip batch
 - 5-10 分钟连续片段
 - tracking metrics
 - QA report
 
-### Phase 5：企业级扩展
+### Phase 7：企业级扩展
 
 - Prefect flow
 - PostgreSQL run metadata
 - MinIO/S3 storage adapter
 - Docker GPU worker
+- WebSocket 进度推送替代轮询
+- 多用户 / 鉴权 / 鉴权后端
 - monitoring dashboard
 
 ---

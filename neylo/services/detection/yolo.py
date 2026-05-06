@@ -32,17 +32,17 @@ class YoloConfig:
 def build_class_map(model_names: dict[int, str]) -> dict[int, ClassName]:
     """Map detector class ids to Neylo `ClassName`.
 
-    Two cases handled:
+    v1 has a single class (`player`). Two cases handled:
 
-    1. Model trained with our class names (`player`, `goalkeeper`,
-       `referee`): map by name. Unknown extra classes are dropped.
-    2. Otherwise (e.g. COCO pretrained): map id 0 (`person`) to
-       `player` and drop the rest.
+    1. Model trained on our merged label set: any class named exactly
+       `player` is mapped to `ClassName.PLAYER`. Other classes (e.g.
+       `ball`, `referee` from a richer source dataset) are dropped.
+    2. Otherwise (e.g. COCO pretrained): id 0 (`person`) is mapped to
+       `player`; the rest are dropped.
     """
-    target_values = {c.value for c in ClassName}
-    matches = {i: name for i, name in model_names.items() if name in target_values}
+    matches = {i: name for i, name in model_names.items() if name == ClassName.PLAYER.value}
     if matches:
-        return {i: ClassName(name) for i, name in matches.items()}
+        return {i: ClassName.PLAYER for i in matches}
     return {COCO_PERSON_CLASS_ID: ClassName.PLAYER}
 
 

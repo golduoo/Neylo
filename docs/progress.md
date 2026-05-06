@@ -5,14 +5,25 @@ Living changelog of what has been built. Phase numbering follows
 
 ## Phase Overview
 
-| Phase | Scope                                              | Status      |
-| ----- | -------------------------------------------------- | ----------- |
-| 0     | 项目骨架: env, configs, Pydantic schemas, CLI       | ✅ Done     |
-| 1     | 最小闭环: YOLO + BoT-SORT + Parquet + annotated MP4 | ⏳ Next     |
-| 2     | 数据与训练: 抽帧 / 伪标注 / CVAT / 训练 / 评估       | ⏳ Pending  |
-| 3     | Tracking 稳定性: CMC + ReID 调参 + tracklet 拼接     | ⏳ Pending  |
-| 4     | 批处理与评估: 多 clip + 长片段 + tracking metrics    | ⏳ Pending  |
-| 5     | 企业级扩展: Prefect + Postgres + MinIO + Docker      | ⏳ Pending  |
+Plan was revised after Phase 1.2 to (a) reduce detector to single-class
+`player` (data was severely imbalanced: keeper=33, referee=16,
+another-player=131 vs player-white=41418), and (b) add an interactive
+web UI as the primary v1 surface. Original PLAN_v2 phases shifted: data
++ training + tracking-stability moved to Phase 4–6; Phase 2 and 3 are
+now Backend API and Frontend UI. Architecture is **precompute then
+render** — upload → Phase 1 pipeline runs offline → UI fetches per-frame
+results.
+
+| Phase | Scope                                                        | Status        |
+| ----- | ------------------------------------------------------------ | ------------- |
+| 0     | 项目骨架: env, configs, Pydantic schemas, CLI                  | ✅ Done       |
+| 1     | CLI 最小闭环: ingest → detect → track → Parquet + 帧/track 索引 | 🟡 In progress (1.1, 1.2 done) |
+| **2** | **Backend API (FastAPI): upload / job status / frame & track queries** | ⏳ Pending |
+| **3** | **Frontend Web UI (Vite + React + TS + Tailwind + shadcn/ui)** | ⏳ Pending  |
+| 4     | 数据与训练: 单类 player 微调                                  | ⏳ Pending   |
+| 5     | Tracking 稳定性: CMC + ReID 调参 + tracklet stitching         | ⏳ Pending   |
+| 6     | 批处理与评估: 多 clip + 长片段 + tracking metrics              | ⏳ Pending   |
+| 7     | 企业级扩展: Prefect + Postgres + MinIO + Docker + WebSocket    | ⏳ Pending   |
 
 ## Commit Timeline
 
@@ -23,7 +34,8 @@ Living changelog of what has been built. Phase numbering follows
 | `eddc6e1` | 0     | Pydantic schemas + CLI skeleton (28 tests pass)            |
 | `b603776` | 0     | Update progress.md with current state and Phase 1 plan     |
 | `c14d8fa` | 1.1   | Ingest + Decode (probe_video, FrameStream) — 39 tests pass |
-| _next_    | 1.2   | Detection adapter (YoloDetector + parse_results) — 48 tests pass |
+| `545fbbe` | 1.2   | Detection adapter (YoloDetector + parse_results) — 48 tests pass |
+| _next_    | plan  | Pivot: single-class `player`, add Backend API + Web UI as v1 surface |
 
 ---
 
@@ -80,7 +92,8 @@ neylo/
 Modules in `neylo/schemas/`, all re-exported from the package root:
 
 - `common.py` — `BBox` (frozen, with `width`/`height`/`area` and order
-  validation), `ClassName` enum (`player`, `goalkeeper`, `referee`)
+  validation), `ClassName` enum (single `player` value; v1 is
+  single-class — see plan pivot below)
 - `video.py` — `VideoAsset`, `VideoSegment`, `FrameInfo`
 - `detection.py` — `DetectionRecord` per PLAN_v2 §6.1
   (video/segment/frame ids, timestamp, class, conf, x1/y1/x2/y2,
@@ -177,11 +190,11 @@ a synthetic `cv2.VideoWriter` mp4 fixture (no dependency on `data/`).
 
 - `YoloConfig` — frozen dataclass mirroring `pipeline.yaml` `detection`
   section (model_path, device, conf, iou, imgsz, half).
-- `build_class_map(model.names)` — auto-adapts to either a fine-tuned
-  model whose `names` include `player/goalkeeper/referee` (direct
-  mapping by name) **or** COCO pretrained weights (id 0 `person` →
-  `player`, the rest dropped). Phase 2 fine-tuning can drop in a new
-  model with matching class names; no code change needed.
+- `build_class_map(model.names)` — auto-adapts: a fine-tuned model
+  exposing a `player` class is mapped by name; otherwise (e.g. COCO
+  pretrained) id 0 (`person`) → `player` and the rest are dropped.
+  Phase 4 fine-tuning can drop in a new single-class model with no
+  code change.
 - `parse_results(xyxy, conf, cls, frame_info, class_map, ...)` — pure
   function turning raw YOLO arrays into `DetectionRecord[]`. Clamps
   out-of-bound boxes to the frame, drops degenerate boxes after clamp,
@@ -211,16 +224,22 @@ End-to-end shortest path on a single 10–20 s clip:
 
 Planned breakdown (each step independently runnable + testable):
 
-| Step | Scope                                                                | Output                                       |
-| ---- | -------------------------------------------------------------------- | -------------------------------------------- |
-| 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅      | `VideoAsset` + `FrameInfo` stream            |
-| 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                     | `DetectionRecord[]` per frame                |
-| 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`   | `TrackRecord[]` per frame                    |
-| 1.4  | Export: pyarrow Parquet writer + supervision MP4 annotator           | `outputs/<video_id>/{tracks.parquet,vis.mp4}`|
-| 1.5  | CLI wiring: replace `neylo run` stub with the 1.1–1.4 chain          | working `neylo run --input <clip>`           |
-| 1.6  | Smoke test on a real Veo highlight clip from `data/`                 | acceptance: ≥99% frame coverage, MP4 plays   |
+| Step | Scope                                                                            | Output                                                |
+| ---- | -------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅                  | `VideoAsset` + `FrameInfo` stream                     |
+| 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                                 | `DetectionRecord[]` per frame                         |
+| 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`               | `TrackRecord[]` per frame                             |
+| 1.4  | Export: pyarrow Parquet writer + `track_index.json`; annotated MP4 optional flag | `outputs/<job>/{detections.parquet,tracks.parquet,track_index.json}` |
+| 1.5  | CLI wiring: replace `neylo run` stub with the 1.1–1.4 chain                       | working `neylo run --input <clip>`                    |
+| 1.6  | Smoke test on a real Veo highlight clip from `data/`                              | acceptance: ≥99% frame coverage, parquet readable     |
 
-Phase 1 entry-costs:
+**Phase 1 entry-costs:**
 
-- YOLO11 weights download (~40–250 MB, into `models/`, gitignored)
+- YOLO11 weights download (~40–250 MB, into `models/`, gitignored — first run downloads automatically via ultralytics)
 - Write `configs/botsort.yaml` (BoT-SORT params, ReID + CMC toggles)
+
+**Note on the plan pivot (post-1.2):**
+
+- v1 detector is now **single-class `player`** (data-driven; see PLAN_v2 §3.5). Goalkeeper / referee removed from `ClassName` enum, configs, and tests; 48 tests still green after the change.
+- v1 deliverable is now **interactive web UI** (Phase 3) backed by **FastAPI** (Phase 2). Annotated MP4 from 1.4 is demoted to an optional CLI flag — the UI will render overlays on the original video using per-frame Parquet queries instead.
+- All Phase 1 work remains valid and is the foundation for Phase 2/3.

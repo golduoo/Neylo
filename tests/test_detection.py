@@ -33,20 +33,18 @@ def test_class_map_coco_pretrained():
     assert m == {0: ClassName.PLAYER}
 
 
-def test_class_map_finetuned_neylo_classes():
-    names = {0: "player", 1: "goalkeeper", 2: "referee"}
+def test_class_map_finetuned_player_only():
+    # v1 fine-tuned weights expose a single `player` class.
+    names = {0: "player"}
     m = build_class_map(names)
-    assert m == {
-        0: ClassName.PLAYER,
-        1: ClassName.GOALKEEPER,
-        2: ClassName.REFEREE,
-    }
+    assert m == {0: ClassName.PLAYER}
 
 
-def test_class_map_finetuned_partial_drops_unknowns():
-    names = {0: "player", 1: "goalkeeper", 2: "ball"}
+def test_class_map_finetuned_drops_extra_classes():
+    # If a richer source dataset also exposes ball/referee, they are dropped.
+    names = {0: "player", 1: "ball", 2: "referee"}
     m = build_class_map(names)
-    assert m == {0: ClassName.PLAYER, 1: ClassName.GOALKEEPER}
+    assert m == {0: ClassName.PLAYER}
 
 
 # ---------- parse_results ----------
@@ -147,19 +145,18 @@ def test_parse_shape_mismatch_raises(frame_info):
 
 
 def test_parse_propagates_class_map_mapping(frame_info):
-    # finetuned model: ids 0/1/2 → player/goalkeeper/referee
+    # All three rows are class 0; only matching ids in class_map become records.
     xyxy, conf, cls = _arrs(
         [[10, 20, 30, 40], [50, 60, 70, 80], [100, 110, 130, 150]],
         [0.9, 0.85, 0.7],
-        [0, 1, 2],
+        [0, 0, 0],
     )
     out = parse_results(
         xyxy=xyxy, conf=conf, cls=cls,
         frame_info=frame_info,
-        class_map={0: ClassName.PLAYER, 1: ClassName.GOALKEEPER, 2: ClassName.REFEREE},
+        class_map={0: ClassName.PLAYER},
         detector_name=DETECTOR_NAME,
         model_version="finetuned.pt",
     )
-    assert [d.class_name for d in out] == [
-        ClassName.PLAYER, ClassName.GOALKEEPER, ClassName.REFEREE,
-    ]
+    assert len(out) == 3
+    assert all(d.class_name == ClassName.PLAYER for d in out)

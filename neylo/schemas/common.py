@@ -6,9 +6,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ClassName(str, Enum):
+    """v1 detector classes.
+
+    Reduced to a single `player` class because the available training
+    data is severely imbalanced (goalkeeper=33, referee=16,
+    another-player=131 vs player-white=41418, ball=2110). The 49 total
+    keeper+referee instances are too few to train a reliable
+    discriminator. Ball is deferred to v2 (separate small-object model
+    with SAHI). See PLAN_v2 §3 and AGENTS.md `v1 Scope`.
+    """
+
     PLAYER = "player"
-    GOALKEEPER = "goalkeeper"
-    REFEREE = "referee"
 
 
 class BBox(BaseModel):
