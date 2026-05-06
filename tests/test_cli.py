@@ -106,3 +106,48 @@ def test_detect_only_missing_detection_section(tmp_path, capsys):
     ])
     assert rc == 2
     assert "detection.model_path" in capsys.readouterr().err
+
+
+def test_track_only_parser_accepts_args():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["track-only"])
+
+    args = parser.parse_args([
+        "track-only",
+        "--input", "clip.mp4",
+        "--config", "configs/pipeline.yaml",
+    ])
+    assert args.command == "track-only"
+    assert args.input == "clip.mp4"
+
+
+def test_track_only_missing_input(tmp_path, capsys):
+    cfg = _write_min_config(tmp_path / "pipeline.yaml")
+    rc = app([
+        "track-only",
+        "--input", str(tmp_path / "missing.mp4"),
+        "--config", str(cfg),
+    ])
+    assert rc == 2
+    assert "input not found" in capsys.readouterr().err
+
+
+def test_track_only_missing_tracking_section(tmp_path, capsys):
+    """detection.model_path exists but tracking.config_path does not."""
+    cfg_path = tmp_path / "pipeline.yaml"
+    cfg_path.write_text(
+        "ingest:\n  video_extensions: ['.mp4']\n"
+        "detection:\n  model_path: yolo11n.pt\n"
+        "runtime:\n  device: cuda:0\n",
+        encoding="utf-8",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")
+    rc = app([
+        "track-only",
+        "--input", str(video),
+        "--config", str(cfg_path),
+    ])
+    assert rc == 2
+    assert "tracking.config_path" in capsys.readouterr().err

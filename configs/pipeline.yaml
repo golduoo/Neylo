@@ -37,19 +37,12 @@ detection:
     overlap_width_ratio: 0.2
 
 tracking:
-  tracker: botsort      # botsort
+  # The detailed knobs (track buffers, ReID, CMC, etc.) live in
+  # configs/botsort.yaml — this file only points at the tracker spec.
+  # Phase 5 will tune ReID / CMC; Phase 5 also adds offline tracklet
+  # stitching as a separate post-processing stage.
+  tracker: botsort
   config_path: configs/botsort.yaml
-  reid:
-    enabled: true
-    model: osnet_x1_0
-    weights: null
-  cmc:
-    enabled: true
-    method: sparseOptFlow
-  stitching:
-    enabled: true
-    max_gap_frames: 60
-    appearance_threshold: 0.3
 
 export:
   parquet:

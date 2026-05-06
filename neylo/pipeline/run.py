@@ -13,7 +13,7 @@ from typing import Protocol
 import numpy as np
 
 from neylo.pipeline.decode import FrameStream
-from neylo.schemas import DetectionRecord, FrameInfo, VideoAsset, VideoSegment
+from neylo.schemas import DetectionRecord, FrameInfo, TrackRecord, VideoAsset, VideoSegment
 
 
 class DetectorProtocol(Protocol):
@@ -23,6 +23,15 @@ class DetectorProtocol(Protocol):
     def detect(
         self, frame: np.ndarray, frame_info: FrameInfo
     ) -> list[DetectionRecord]: ...
+
+
+class TrackerProtocol(Protocol):
+    """Structural type for a tracker. Same shape as DetectorProtocol but
+    returns TrackRecord and is allowed to keep state across calls."""
+
+    def track(
+        self, frame: np.ndarray, frame_info: FrameInfo
+    ) -> list[TrackRecord]: ...
 
 
 def run_detection_only(
@@ -39,3 +48,19 @@ def run_detection_only(
     with FrameStream(asset, segment) as stream:
         for frame, info in stream:
             yield from detector.detect(frame, info)
+
+
+def run_tracking(
+    asset: VideoAsset,
+    segment: VideoSegment,
+    tracker: TrackerProtocol,
+) -> Iterator[TrackRecord]:
+    """Iterate frames in `segment` and yield TrackRecords from `tracker`.
+
+    The tracker is responsible for maintaining state across frames.
+    Order of yielded records preserves frame order; within a frame the
+    order matches the tracker's output order.
+    """
+    with FrameStream(asset, segment) as stream:
+        for frame, info in stream:
+            yield from tracker.track(frame, info)

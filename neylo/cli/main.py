@@ -108,6 +108,79 @@ def cmd_detect_only(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_botsort_config(detection_cfg: dict, tracking_cfg: dict):
+    """Construct a BotSortConfig from pipeline.yaml.
+
+    Tracker shares model_path / device / conf / iou / imgsz / half with
+    the detection section because ultralytics couples det+track.
+    """
+    from neylo.services.tracking import BotSortConfig
+
+    return BotSortConfig(
+        model_path=str(detection_cfg["model_path"]),
+        tracker_path=str(tracking_cfg["config_path"]),
+        device=str(detection_cfg.get("device", "cuda:0")),
+        conf=float(detection_cfg.get("conf", 0.25)),
+        iou=float(detection_cfg.get("iou", 0.6)),
+        imgsz=int(detection_cfg.get("imgsz", 1280)),
+        half=bool(detection_cfg.get("half", True)),
+    )
+
+
+def cmd_track_only(args: argparse.Namespace) -> int:
+    """Phase 1.4 smoke: ingest -> decode -> detect+track -> tracks.parquet."""
+    from neylo.pipeline import (
+        probe_video,
+        run_tracking,
+        single_segment,
+        write_tracks_parquet,
+    )
+    from neylo.services.tracking import BotSortTracker
+
+    input_path = Path(args.input).resolve()
+    config_path = Path(args.config).resolve()
+    output_root = Path(args.output_dir).resolve() if args.output_dir else Path("outputs").resolve()
+
+    if not input_path.is_file():
+        print(f"error: input not found: {input_path}", file=sys.stderr)
+        return 2
+
+    cfg = _load_config(config_path)
+    detection_cfg = cfg.get("detection")
+    tracking_cfg = cfg.get("tracking")
+    if not detection_cfg or "model_path" not in detection_cfg:
+        print("error: pipeline.yaml is missing detection.model_path", file=sys.stderr)
+        return 2
+    if not tracking_cfg or "config_path" not in tracking_cfg:
+        print("error: pipeline.yaml is missing tracking.config_path", file=sys.stderr)
+        return 2
+
+    asset = probe_video(input_path)
+    segment = single_segment(asset)
+    bot_cfg = _build_botsort_config(detection_cfg, tracking_cfg)
+
+    print(f"neylo track-only")
+    print(f"  input:        {input_path}")
+    print(f"  video_id:     {asset.video_id}")
+    print(f"  fps:          {asset.fps:.3f}")
+    print(f"  frames:       {segment.end_frame}")
+    print(f"  resolution:   {asset.width}x{asset.height}")
+    print(f"  model_path:   {bot_cfg.model_path}")
+    print(f"  tracker_path: {bot_cfg.tracker_path}")
+    print(f"  device:       {bot_cfg.device}")
+    print(f"  imgsz / conf: {bot_cfg.imgsz} / {bot_cfg.conf}")
+
+    tracker = BotSortTracker(bot_cfg)
+    out_dir = output_root / asset.video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = out_dir / "tracks.parquet"
+
+    n = write_tracks_parquet(run_tracking(asset, segment, tracker), parquet_path)
+    print(f"  wrote:        {parquet_path}")
+    print(f"  rows:         {n}")
+    return 0
+
+
 def cmd_run_batch(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).resolve()
     config_path = Path(args.config).resolve()
@@ -158,6 +231,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for outputs/<video_id>/detections.parquet (default: outputs/)",
     )
     detect.set_defaults(func=cmd_detect_only)
+
+    track = sub.add_parser(
+        "track-only",
+        help="Phase 1.4 smoke: detect+track on a single video and write tracks.parquet",
+    )
+    track.add_argument("--input", required=True, help="path to a video file")
+    track.add_argument("--config", default="configs/pipeline.yaml")
+    track.add_argument(
+        "--output-dir",
+        default=None,
+        help="directory for outputs/<video_id>/tracks.parquet (default: outputs/)",
+    )
+    track.set_defaults(func=cmd_track_only)
 
     return p
 

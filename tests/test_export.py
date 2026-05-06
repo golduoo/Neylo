@@ -2,8 +2,13 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from neylo.pipeline.export import DETECTIONS_SCHEMA, write_detections_parquet
-from neylo.schemas import ClassName, DetectionRecord
+from neylo.pipeline.export import (
+    DETECTIONS_SCHEMA,
+    TRACKS_SCHEMA,
+    write_detections_parquet,
+    write_tracks_parquet,
+)
+from neylo.schemas import ClassName, DetectionRecord, TrackRecord
 
 
 def _make_record(frame_id: int = 0, **overrides) -> DetectionRecord:
@@ -65,3 +70,57 @@ def test_write_no_tmp_file_left_behind(tmp_path: Path):
     write_detections_parquet([_make_record(0)], out)
     leftover = list(tmp_path.glob("*.tmp"))
     assert leftover == []
+
+
+# ---------- tracks ----------
+
+def _make_track(frame_id: int = 0, track_id: int = 1, **overrides) -> TrackRecord:
+    base = dict(
+        video_id="v1",
+        segment_id="seg_0",
+        frame_id=frame_id,
+        timestamp_ms=frame_id * 40.0,
+        track_id=track_id,
+        class_name=ClassName.PLAYER,
+        conf=0.9,
+        x1=10.0, y1=20.0, x2=30.0, y2=50.0,
+        tracker_name="botsort",
+        source_track_id=track_id,
+    )
+    base.update(overrides)
+    return TrackRecord(**base)
+
+
+def test_write_tracks_round_trip(tmp_path: Path):
+    records = [_make_track(i, track_id=1 + (i % 3)) for i in range(6)]
+    out = tmp_path / "tracks.parquet"
+    n = write_tracks_parquet(records, out)
+    assert n == 6
+    assert out.exists()
+
+    table = pq.read_table(out)
+    assert table.num_rows == 6
+    assert table.schema.names == TRACKS_SCHEMA.names
+
+    rows = table.to_pylist()
+    assert rows[0]["track_id"] == 1
+    assert rows[0]["source_track_id"] == 1
+    assert rows[0]["stitched_track_id"] is None
+    assert rows[0]["tracker_name"] == "botsort"
+
+
+def test_write_tracks_empty_yields_empty_table(tmp_path: Path):
+    out = tmp_path / "tracks.parquet"
+    n = write_tracks_parquet(iter(()), out)
+    assert n == 0
+    table = pq.read_table(out)
+    assert table.num_rows == 0
+    assert table.schema.names == TRACKS_SCHEMA.names
+
+
+def test_write_tracks_preserves_stitched_id(tmp_path: Path):
+    records = [_make_track(0, track_id=5, stitched_track_id=99)]
+    out = tmp_path / "tracks.parquet"
+    write_tracks_parquet(records, out)
+    rows = pq.read_table(out).to_pylist()
+    assert rows[0]["stitched_track_id"] == 99

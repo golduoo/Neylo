@@ -1,0 +1,31 @@
+# BoT-SORT v1 baseline configuration.
+#
+# Phase 1.4 goal: get tracking working end-to-end with sensible defaults.
+# Aggressive ReID / CMC / stitching tuning lives in Phase 5 (see PLAN_v2 §12).
+# Schema and key names follow ultralytics' built-in BoT-SORT spec.
+
+tracker_type: botsort
+
+# Detection-confidence gating used by the tracker
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+
+# Track lifetime: how many frames an unmatched track survives before death.
+# Football clips have frequent short occlusions; 60 frames @ 30fps = 2s.
+track_buffer: 60
+
+# IoU + score association gate
+match_thresh: 0.8
+fuse_score: True
+
+# Camera motion compensation (CMC) — required for Veo pan/tilt footage.
+# See PLAN_v2 ADR-003 / docs/decisions/architecture.md.
+gmc_method: sparseOptFlow
+
+# ReID disabled at Phase 1 baseline.
+# Phase 5 will turn this on with osnet_x1_0_msmt17 weights and tune
+# proximity_thresh / appearance_thresh together.
+with_reid: False
+proximity_thresh: 0.5
+appearance_thresh: 0.25

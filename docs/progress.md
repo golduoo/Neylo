@@ -37,7 +37,8 @@ results.
 | `545fbbe` | 1.2   | Detection adapter (YoloDetector + parse_results) — 48 tests pass |
 | `c24824f` | plan  | Pivot: single-class `player`, add Backend API + Web UI as v1 surface |
 | `a4572f3` | plan  | Lock external dataset; propagate single-class across all plan docs |
-| _next_    | 1.3   | Detection end-to-end smoke: export.py + run.py + `neylo detect-only` — 61 tests pass |
+| `363f01a` | 1.3   | Detection end-to-end smoke: export.py + run.py + `neylo detect-only` — 61 tests pass |
+| _next_    | 1.4   | BoT-SORT tracking: configs/botsort.yaml + tracking service + `neylo track-only` — 75 tests pass |
 
 ---
 
@@ -284,6 +285,99 @@ print(t.to_pandas().describe())
 Sanity checks: row count is plausible, `conf` distribution is non-
 trivial (not all 1.0 or 0.0), bboxes lie inside frame bounds, no nulls.
 
+**1.3 GPU smoke result (recorded):** `3 010545_-_Attack.mp4`
+(13s, 392 frames, 1920×1080, 29.97 fps) → 8304 rows
+(~21.2 detections/frame, plausible for football scene). PNG overlay
+confirmed boxes hug players; off-pitch false positives present but
+expected for COCO-pretrained nano model.
+
+### ✅ 1.4 BoT-SORT tracking
+
+`configs/botsort.yaml` — v1 baseline:
+
+- BoT-SORT with `gmc_method: sparseOptFlow` for camera motion
+  compensation (required for Veo pan/tilt — see ADR-003)
+- `track_buffer: 60` (~2s @ 30fps) for short-occlusion tolerance
+- `with_reid: False` for Phase 1 baseline; ReID + appearance tuning
+  is Phase 5 territory
+
+`neylo/services/tracking/botsort.py`:
+
+- `BotSortConfig` — frozen dataclass; shares `model_path` + inference
+  knobs with `YoloConfig` because ultralytics couples det+track.
+- `parse_track_results(...)` — pure function, mirrors
+  `detection.parse_results` (clamp + degenerate drop) plus a track-id
+  filter that drops detections without a confirmed track id (the
+  tracker emits `id=None` or negative for unmatched boxes).
+- `BotSortTracker` — stateful wrapper. Holds an ultralytics `YOLO`
+  instance and calls `model.track(frame, persist=...)` per frame.
+  `persist=False` on the first call (initialize tracker), `persist=
+  True` thereafter. `reset()` exposed for manual re-initialization.
+
+`neylo/pipeline/run.py`:
+
+- `TrackerProtocol` — structural type so tests can pass a fake tracker.
+- `run_tracking(asset, segment, tracker)` — generator; mirrors
+  `run_detection_only` but yields `TrackRecord`.
+
+`neylo/pipeline/export.py`:
+
+- `TRACKS_SCHEMA` — pyarrow schema matching `TrackRecord`.
+- `write_tracks_parquet(records, path)` — same atomic-write pattern
+  as detections.
+
+`neylo/cli/main.py`:
+
+- New `neylo track-only --input <video>` subcommand. Same shape as
+  `detect-only`; writes `outputs/<video_id>/tracks.parquet`.
+
+`configs/pipeline.yaml`:
+
+- Tracking section simplified to just `tracker` + `config_path`. The
+  old aspirational ReID / CMC / stitching subsections were misleading
+  — those knobs live in `configs/botsort.yaml` now, and stitching is
+  Phase 5 work that doesn't need a config flag yet.
+
+Tests (14 new):
+
+- `tests/test_tracking.py` (8): `parse_track_results` empty / unmapped
+  class drop / negative track id drop / clamp / degenerate drop /
+  shape mismatch / full record fields / `run_tracking` per-frame yield
+  via fake tracker.
+- `tests/test_export.py` (3 added): tracks round-trip / empty tracks /
+  stitched id round-trip.
+- `tests/test_cli.py` (3 added): `track-only` parser registered,
+  missing input → 2, missing `tracking.config_path` → 2.
+
+**No GPU dependency in any unit test.** GPU verification is the
+manual step below.
+
+Total project test count: **75 pass**.
+
+#### Manual GPU smoke (run in `cv_env`)
+
+```bash
+neylo track-only \
+  --input "data/Veo highlights ANUFC vs WEFC 23s/3 010545_-_Attack.mp4" \
+  --config configs/pipeline.yaml
+```
+
+Expected: `outputs/3_010545_attack/tracks.parquet`. Row count typically
+slightly lower than `detections.parquet` (some detections have no
+confirmed track id yet, especially in early frames). Sanity check:
+
+```python
+import pyarrow.parquet as pq
+t = pq.read_table("outputs/3_010545_attack/tracks.parquet").to_pandas()
+print("rows:", len(t), "frames:", t.frame_id.nunique(),
+      "unique track ids:", t.track_id.nunique())
+print(t.groupby("track_id").size().describe())  # track length distribution
+```
+
+Expect: 10–30 unique track ids on a busy football clip; longest tracks
+last most of the clip; many short fragmented tracks if occlusions /
+camera motion are heavy (the latter is what Phase 5 will tune away).
+
 
 
 End-to-end shortest path on a single 10–20 s clip:
@@ -296,7 +390,7 @@ Planned breakdown (each step independently runnable + testable):
 | 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅                  | `VideoAsset` + `FrameInfo` stream                     |
 | 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                                 | `DetectionRecord[]` per frame                         |
 | 1.3  | Detection end-to-end smoke (no tracking yet): export + runner + CLI ✅           | `outputs/<video_id>/detections.parquet`               |
-| 1.4  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`               | `TrackRecord[]` per frame                             |
+| 1.4  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml` ✅            | `outputs/<video_id>/tracks.parquet`                   |
 | 1.5  | Export tracks: extend `export.py` with `tracks.parquet` + `track_index.json`     | `outputs/<job>/{detections,tracks}.parquet + track_index.json` |
 | 1.6  | CLI wiring: full `neylo run` (replace stub) + smoke on Veo clip                  | acceptance: ≥99% frame coverage, parquet readable     |
 
