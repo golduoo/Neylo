@@ -22,7 +22,8 @@ Living changelog of what has been built. Phase numbering follows
 | `300900c` | 0     | Fix stale `PLAN.md` refs, env path, align to Phase numbers |
 | `eddc6e1` | 0     | Pydantic schemas + CLI skeleton (28 tests pass)            |
 | `b603776` | 0     | Update progress.md with current state and Phase 1 plan     |
-| _next_    | 1.1   | Ingest + Decode (probe_video, FrameStream) — 39 tests pass |
+| `c14d8fa` | 1.1   | Ingest + Decode (probe_video, FrameStream) — 39 tests pass |
+| _next_    | 1.2   | Detection adapter (YoloDetector + parse_results) — 48 tests pass |
 
 ---
 
@@ -169,7 +170,39 @@ and `neylo --version` prints `neylo 0.1.0`.
 
 Tests in `tests/test_ingest.py` (6) and `tests/test_decode.py` (5) use
 a synthetic `cv2.VideoWriter` mp4 fixture (no dependency on `data/`).
-Total project test count: **39 pass**.
+
+### ✅ 1.2 Detection adapter
+
+`neylo/services/detection/yolo.py`:
+
+- `YoloConfig` — frozen dataclass mirroring `pipeline.yaml` `detection`
+  section (model_path, device, conf, iou, imgsz, half).
+- `build_class_map(model.names)` — auto-adapts to either a fine-tuned
+  model whose `names` include `player/goalkeeper/referee` (direct
+  mapping by name) **or** COCO pretrained weights (id 0 `person` →
+  `player`, the rest dropped). Phase 2 fine-tuning can drop in a new
+  model with matching class names; no code change needed.
+- `parse_results(xyxy, conf, cls, frame_info, class_map, ...)` — pure
+  function turning raw YOLO arrays into `DetectionRecord[]`. Clamps
+  out-of-bound boxes to the frame, drops degenerate boxes after clamp,
+  raises on shape mismatch. Tested with hand-crafted numpy fixtures
+  (no GPU, no model load).
+- `YoloDetector(config)` — stateful wrapper. Loads weights eagerly in
+  `__init__` (cost paid once per pipeline run), calls
+  `model.predict(...)` on each frame, then delegates to
+  `parse_results`. Exposes `detector_name`, `model_version`,
+  `class_map` as read-only properties.
+
+`configs/pipeline.yaml`: `detection.model_path` switched from
+`models/yolo11x.pt` to `yolo11n.pt` for Phase 1 — bare name triggers
+ultralytics auto-download. Will switch to `yolo11m`/`yolo11x` (with
+SAHI enabled) after the pipeline is end-to-end working.
+
+Tests in `tests/test_detection.py` (9): `build_class_map` strategies,
+`parse_results` filtering / clamping / degenerate-drop / shape
+mismatch. **No GPU dependency.**
+
+Total project test count: **48 pass**.
 
 
 
@@ -181,7 +214,7 @@ Planned breakdown (each step independently runnable + testable):
 | Step | Scope                                                                | Output                                       |
 | ---- | -------------------------------------------------------------------- | -------------------------------------------- |
 | 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅      | `VideoAsset` + `FrameInfo` stream            |
-| 1.2  | Detection service: ultralytics YOLO11 wrapper                        | `DetectionRecord[]` per frame                |
+| 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                     | `DetectionRecord[]` per frame                |
 | 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`   | `TrackRecord[]` per frame                    |
 | 1.4  | Export: pyarrow Parquet writer + supervision MP4 annotator           | `outputs/<video_id>/{tracks.parquet,vis.mp4}`|
 | 1.5  | CLI wiring: replace `neylo run` stub with the 1.1–1.4 chain          | working `neylo run --input <clip>`           |

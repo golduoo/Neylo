@@ -16,7 +16,11 @@ decode:
   backend: ffmpeg      # ffmpeg | nvdec (nvdec deferred)
 
 detection:
-  model_path: models/yolo11x.pt
+  # Phase 1 default: nano weights for fast end-to-end iteration. Switch to
+  # yolo11m.pt or yolo11x.pt once the pipeline is wired (1.5+) and SAHI
+  # is enabled. Bare names like "yolo11n.pt" trigger ultralytics auto-
+  # download; pre-stage weights into `models/` and use a path to avoid it.
+  model_path: yolo11n.pt
   classes: [player, goalkeeper, referee]
   imgsz: 1280
   conf: 0.25
