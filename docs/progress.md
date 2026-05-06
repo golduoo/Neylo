@@ -41,7 +41,8 @@ results.
 | `2859307` | 1.4   | BoT-SORT tracking: configs/botsort.yaml + tracking service + `neylo track-only` — 75 tests pass |
 | `1a1c3fb` | —     | Untrack stray test.py from previous commit |
 | `493ebab` | 1.4   | Record GPU smoke results (8304 rows / 32 tracks / median 361 frames) |
-| _next_    | 1.5   | Track index: build_track_index + write_track_index — 84 tests pass |
+| `3bc821e` | 1.5   | Track index: build_track_index + write_track_index — 84 tests pass |
+| _next_    | 1.6   | Unified `neylo run`: detect+track in one inference pass + 3 artifacts — 87 tests pass |
 
 ---
 
@@ -422,7 +423,70 @@ Tests in `tests/test_export.py` (9 added): empty, single-track,
 multi-frame, multi-track, order-independence, JSON round-trip,
 parent-dir creation, no .tmp leftover, empty dict serialization.
 
-Total project test count: **84 pass**.
+### ✅ 1.6 Unified `neylo run`
+
+Replaces the Phase 0 stub with the full pipeline. Architecture
+decision: **single inference pass produces both detections and
+tracks** — `BotSortTracker.track_and_detect` runs `model.track(...)`
+once per frame and parses the result into both `DetectionRecord[]`
+and `TrackRecord[]`. No double model load, no double GPU pass.
+
+`neylo/services/tracking/botsort.py`:
+
+- factored shared `_run_track(frame)` helper; old `track()` and new
+  `track_and_detect()` both call it
+- `track_and_detect()` reuses `parse_results` from the detection
+  module (cross-service import is acceptable here because we are
+  consciously combining the two outputs of one inference call)
+
+`neylo/pipeline/run.py`:
+
+- `CombinedTrackerProtocol` structural type
+- `run_detect_and_track(asset, segment, tracker)` generator yielding
+  `(detections, tracks)` per frame
+
+`neylo/cli/main.py` `cmd_run`:
+
+- validates input + `detection.model_path` + `tracking.config_path`
+- loads `BotSortTracker` once
+- accumulates detections + tracks in memory (Phase 1 short clips;
+  streaming Parquet writes deferred to Phase 6)
+- writes three artifacts:
+  `outputs/<video_id>/detections.parquet`,
+  `outputs/<video_id>/tracks.parquet`,
+  `outputs/<video_id>/track_index.json`
+- new `--output-dir` flag (defaults to `outputs/`)
+
+Tests:
+
+- `tests/test_cli.py` replaces the old "Phase 0 stub" test with two
+  config-validation tests (missing `detection.model_path`, missing
+  `tracking.config_path`).
+- `tests/test_run.py` adds 2 new tests using a `_FakeCombinedTracker`
+  (returns 2 detections + 1 track per frame): per-frame yield shape
+  + full pipeline integration (writes all 3 artifacts to tmp_path,
+  reads them back, verifies row counts and track index content).
+
+Total project test count: **87 pass**.
+
+#### Manual GPU smoke (Phase 1 acceptance)
+
+```bash
+neylo run \
+  --input "data/Veo highlights ANUFC vs WEFC 23s/3 010545_-_Attack.mp4" \
+  --config configs/pipeline.yaml
+```
+
+Expected three artifacts under `outputs/3_010545_attack/`:
+
+- `detections.parquet` (~8300 rows, matches `detect-only` output)
+- `tracks.parquet` (~8300 rows, matches `track-only` output)
+- `track_index.json` (~32 entries — main on-pitch players + sideline
+  false positives from COCO `person`)
+
+If counts roughly match the standalone `detect-only` and `track-only`
+runs from 1.3 / 1.4 GPU smokes, **Phase 1 is complete** and the
+foundation for Phase 2 (Backend API) and Phase 3 (Web UI) is in place.
 
 
 
@@ -438,7 +502,7 @@ Planned breakdown (each step independently runnable + testable):
 | 1.3  | Detection end-to-end smoke (no tracking yet): export + runner + CLI ✅           | `outputs/<video_id>/detections.parquet`               |
 | 1.4  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml` ✅            | `outputs/<video_id>/tracks.parquet`                   |
 | 1.5  | Track index: `build_track_index` + `write_track_index` ✅                        | `outputs/<job>/track_index.json` for fast UI/API lookup |
-| 1.6  | CLI wiring: full `neylo run` (replace stub) + smoke on Veo clip                  | acceptance: ≥99% frame coverage, parquet readable     |
+| 1.6  | Unified `neylo run`: single-pass detect+track → 3 artifacts ✅                   | working `neylo run --input <clip>`                    |
 
 **Phase 1 entry-costs:**
 

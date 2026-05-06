@@ -32,15 +32,30 @@ def test_run_missing_input(tmp_path, capsys):
     assert "input not found" in err
 
 
-def test_run_stub_succeeds(tmp_path, capsys):
+def test_run_missing_detection_section(tmp_path, capsys):
+    """`run` requires detection.model_path; minimal config has no detection block."""
+    cfg = _write_min_config(tmp_path / "pipeline.yaml")
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"")
-    cfg = _write_min_config(tmp_path / "pipeline.yaml")
     rc = app(["run", "--input", str(video), "--config", str(cfg)])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "Phase 0 stub" in out
-    assert "cuda:0" in out
+    assert rc == 2
+    assert "detection.model_path" in capsys.readouterr().err
+
+
+def test_run_missing_tracking_section(tmp_path, capsys):
+    """detection block exists but tracking.config_path does not."""
+    cfg_path = tmp_path / "pipeline.yaml"
+    cfg_path.write_text(
+        "ingest:\n  video_extensions: ['.mp4']\n"
+        "detection:\n  model_path: yolo11n.pt\n"
+        "runtime:\n  device: cuda:0\n",
+        encoding="utf-8",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")
+    rc = app(["run", "--input", str(video), "--config", str(cfg_path)])
+    assert rc == 2
+    assert "tracking.config_path" in capsys.readouterr().err
 
 
 def test_run_batch_lists_videos(tmp_path, capsys):

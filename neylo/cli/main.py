@@ -17,20 +17,77 @@ def _load_config(config_path: Path) -> dict:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Phase 1.6: full pipeline on a single video.
+
+    ingest → decode → detect+track (single inference pass)
+           → write detections.parquet + tracks.parquet + track_index.json
+    """
+    from neylo.pipeline import (
+        build_track_index,
+        probe_video,
+        run_detect_and_track,
+        single_segment,
+        write_detections_parquet,
+        write_track_index,
+        write_tracks_parquet,
+    )
+    from neylo.services.tracking import BotSortTracker
+
     input_path = Path(args.input).resolve()
     config_path = Path(args.config).resolve()
-    cfg = _load_config(config_path)
+    output_root = Path(args.output_dir).resolve() if args.output_dir else Path("outputs").resolve()
 
-    if not input_path.exists():
+    if not input_path.is_file():
         print(f"error: input not found: {input_path}", file=sys.stderr)
         return 2
 
-    # Phase 0 stub: just echo the plan. Real stages land in Phase 1.
-    print(f"neylo run (Phase 0 stub)")
-    print(f"  input:  {input_path}")
-    print(f"  config: {config_path}")
-    print(f"  device: {cfg.get('runtime', {}).get('device', 'unset')}")
-    print(f"  stages: ingest -> segment -> detect -> track -> export (not wired yet)")
+    cfg = _load_config(config_path)
+    detection_cfg = cfg.get("detection")
+    tracking_cfg = cfg.get("tracking")
+    if not detection_cfg or "model_path" not in detection_cfg:
+        print("error: pipeline.yaml is missing detection.model_path", file=sys.stderr)
+        return 2
+    if not tracking_cfg or "config_path" not in tracking_cfg:
+        print("error: pipeline.yaml is missing tracking.config_path", file=sys.stderr)
+        return 2
+
+    asset = probe_video(input_path)
+    segment = single_segment(asset)
+    bot_cfg = _build_botsort_config(detection_cfg, tracking_cfg)
+
+    print(f"neylo run")
+    print(f"  input:        {input_path}")
+    print(f"  video_id:     {asset.video_id}")
+    print(f"  fps:          {asset.fps:.3f}")
+    print(f"  frames:       {segment.end_frame}")
+    print(f"  resolution:   {asset.width}x{asset.height}")
+    print(f"  model_path:   {bot_cfg.model_path}")
+    print(f"  tracker_path: {bot_cfg.tracker_path}")
+    print(f"  device:       {bot_cfg.device}")
+
+    tracker = BotSortTracker(bot_cfg)
+    out_dir = output_root / asset.video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1: short clips -> in-memory accumulation is fine. Phase 6 will
+    # introduce streaming Parquet writes for long videos.
+    detections: list = []
+    tracks: list = []
+    for dets, trks in run_detect_and_track(asset, segment, tracker):
+        detections.extend(dets)
+        tracks.extend(trks)
+
+    det_path = out_dir / "detections.parquet"
+    trk_path = out_dir / "tracks.parquet"
+    idx_path = out_dir / "track_index.json"
+
+    n_det = write_detections_parquet(detections, det_path)
+    n_trk = write_tracks_parquet(tracks, trk_path)
+    n_idx = write_track_index(build_track_index(tracks), idx_path)
+
+    print(f"  wrote:        {det_path}  ({n_det} rows)")
+    print(f"                {trk_path}  ({n_trk} rows)")
+    print(f"                {idx_path}  ({n_idx} tracks)")
     return 0
 
 
@@ -212,6 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run pipeline on a single video")
     run.add_argument("--input", required=True, help="path to a video file")
     run.add_argument("--config", default="configs/pipeline.yaml")
+    run.add_argument(
+        "--output-dir",
+        default=None,
+        help="directory for outputs/<video_id>/ artifacts (default: outputs/)",
+    )
     run.set_defaults(func=cmd_run)
 
     runb = sub.add_parser("run-batch", help="Run pipeline on a directory of videos")

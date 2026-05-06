@@ -34,6 +34,18 @@ class TrackerProtocol(Protocol):
     ) -> list[TrackRecord]: ...
 
 
+class CombinedTrackerProtocol(Protocol):
+    """Structural type for a tracker that exposes detection records too.
+
+    Implementations should run a single inference pass and return both
+    outputs to avoid paying for two forward passes in `neylo run`.
+    """
+
+    def track_and_detect(
+        self, frame: np.ndarray, frame_info: FrameInfo
+    ) -> tuple[list[DetectionRecord], list[TrackRecord]]: ...
+
+
 def run_detection_only(
     asset: VideoAsset,
     segment: VideoSegment,
@@ -64,3 +76,19 @@ def run_tracking(
     with FrameStream(asset, segment) as stream:
         for frame, info in stream:
             yield from tracker.track(frame, info)
+
+
+def run_detect_and_track(
+    asset: VideoAsset,
+    segment: VideoSegment,
+    tracker: CombinedTrackerProtocol,
+) -> Iterator[tuple[list[DetectionRecord], list[TrackRecord]]]:
+    """Per-frame generator yielding `(detections, tracks)` tuples.
+
+    Drives `tracker.track_and_detect(...)` once per frame so a single
+    inference pass produces both Parquet outputs. Caller decides
+    whether to materialize, stream, or partially consume.
+    """
+    with FrameStream(asset, segment) as stream:
+        for frame, info in stream:
+            yield tracker.track_and_detect(frame, info)

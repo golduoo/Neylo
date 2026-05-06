@@ -16,8 +16,12 @@ from pathlib import Path
 
 import numpy as np
 
-from neylo.schemas import ClassName, FrameInfo, TrackRecord
-from neylo.services.detection.yolo import build_class_map
+from neylo.schemas import ClassName, DetectionRecord, FrameInfo, TrackRecord
+from neylo.services.detection.yolo import (
+    DETECTOR_NAME,
+    build_class_map,
+    parse_results,
+)
 
 TRACKER_NAME = "botsort"
 
@@ -145,7 +149,9 @@ class BotSortTracker:
         """Force the next call to (re)initialize the underlying tracker."""
         self._first_call = True
 
-    def track(self, frame: np.ndarray, frame_info: FrameInfo) -> list[TrackRecord]:
+    def _run_track(self, frame: np.ndarray):
+        """Single shared `model.track(...)` call. Returns the boxes object
+        (or None), advancing `_first_call` after the first invocation."""
         results = self._model.track(
             frame,
             persist=not self._first_call,
@@ -158,11 +164,16 @@ class BotSortTracker:
             verbose=False,
         )
         self._first_call = False
-
         if not results:
-            return []
+            return None
         boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0 or boxes.id is None:
+        if boxes is None or len(boxes) == 0:
+            return None
+        return boxes
+
+    def track(self, frame: np.ndarray, frame_info: FrameInfo) -> list[TrackRecord]:
+        boxes = self._run_track(frame)
+        if boxes is None or boxes.id is None:
             return []
 
         return parse_track_results(
@@ -174,3 +185,47 @@ class BotSortTracker:
             class_map=self._class_map,
             tracker_name=self._tracker_name,
         )
+
+    def track_and_detect(
+        self, frame: np.ndarray, frame_info: FrameInfo
+    ) -> tuple[list[DetectionRecord], list[TrackRecord]]:
+        """Run a single inference pass and return both detection and track records.
+
+        ultralytics' `model.track(...)` already runs detection internally;
+        this method exposes both outputs from one call so the unified
+        `neylo run` does not pay for two forward passes. Detection rows
+        are produced for every box (including those without a confirmed
+        track id); track rows are produced only for boxes whose track id
+        is confirmed.
+        """
+        boxes = self._run_track(frame)
+        if boxes is None:
+            return [], []
+
+        xyxy_np = boxes.xyxy.cpu().numpy()
+        conf_np = boxes.conf.cpu().numpy()
+        cls_np = boxes.cls.cpu().numpy()
+
+        detections = parse_results(
+            xyxy=xyxy_np,
+            conf=conf_np,
+            cls=cls_np,
+            frame_info=frame_info,
+            class_map=self._class_map,
+            detector_name=DETECTOR_NAME,
+            model_version=self._model_path_basename,
+        )
+
+        if boxes.id is None:
+            return detections, []
+
+        tracks = parse_track_results(
+            xyxy=xyxy_np,
+            conf=conf_np,
+            cls=cls_np,
+            track_ids=boxes.id.cpu().numpy().astype(np.int64),
+            frame_info=frame_info,
+            class_map=self._class_map,
+            tracker_name=self._tracker_name,
+        )
+        return detections, tracks
