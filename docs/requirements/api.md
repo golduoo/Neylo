@@ -16,9 +16,11 @@ Xiwen
 - Framework: **FastAPI** (Python 3.11, runs in `cv_env`)
 - ASGI server: `uvicorn` for dev, `uvicorn` + `gunicorn` workers for
   later deployment
-- Background jobs: in-process task runner for v1 (single worker,
-  `asyncio.create_task` or `BackgroundTasks`); replaced by Prefect /
-  Celery in Phase 7
+- Background jobs: FastAPI `BackgroundTasks` for v1 (single worker,
+  serial processing, in-process job registry). The migration path to
+  a real queue (Prefect / Celery / RQ) is fully spec'd in
+  **`docs/decisions/architecture.md` ADR-006** — change locations and
+  files are documented there.
 - Storage: local filesystem (`uploads/`, `outputs/`) for v1; object
   storage in Phase 7
 - Schemas: existing `neylo.schemas.*` Pydantic v2 models, reused as
