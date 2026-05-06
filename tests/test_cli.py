@@ -61,3 +61,48 @@ def test_run_batch_missing_dir(tmp_path, capsys):
     rc = app(["run-batch", "--input-dir", str(tmp_path / "nope"), "--config", str(cfg)])
     assert rc == 2
     assert "input dir not found" in capsys.readouterr().err
+
+
+def test_detect_only_parser_accepts_args():
+    """detect-only is a registered subcommand with required --input."""
+    parser = build_parser()
+    # missing --input should fail
+    with pytest.raises(SystemExit):
+        parser.parse_args(["detect-only"])
+
+    args = parser.parse_args([
+        "detect-only",
+        "--input", "clip.mp4",
+        "--config", "configs/pipeline.yaml",
+        "--output-dir", "outputs",
+    ])
+    assert args.command == "detect-only"
+    assert args.input == "clip.mp4"
+    assert args.output_dir == "outputs"
+
+
+def test_detect_only_missing_input(tmp_path, capsys):
+    cfg = _write_min_config(tmp_path / "pipeline.yaml")
+    # No `detection` block in this minimal config; the missing-input check
+    # runs first and returns 2 before any model load.
+    rc = app([
+        "detect-only",
+        "--input", str(tmp_path / "missing.mp4"),
+        "--config", str(cfg),
+    ])
+    assert rc == 2
+    assert "input not found" in capsys.readouterr().err
+
+
+def test_detect_only_missing_detection_section(tmp_path, capsys):
+    """If pipeline.yaml lacks detection.model_path, fail with a clear message."""
+    cfg = _write_min_config(tmp_path / "pipeline.yaml")  # no `detection:` block
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")
+    rc = app([
+        "detect-only",
+        "--input", str(video),
+        "--config", str(cfg),
+    ])
+    assert rc == 2
+    assert "detection.model_path" in capsys.readouterr().err

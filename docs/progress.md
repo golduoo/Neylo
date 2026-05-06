@@ -35,7 +35,9 @@ results.
 | `b603776` | 0     | Update progress.md with current state and Phase 1 plan     |
 | `c14d8fa` | 1.1   | Ingest + Decode (probe_video, FrameStream) — 39 tests pass |
 | `545fbbe` | 1.2   | Detection adapter (YoloDetector + parse_results) — 48 tests pass |
-| _next_    | plan  | Pivot: single-class `player`, add Backend API + Web UI as v1 surface |
+| `c24824f` | plan  | Pivot: single-class `player`, add Backend API + Web UI as v1 surface |
+| `a4572f3` | plan  | Lock external dataset; propagate single-class across all plan docs |
+| _next_    | 1.3   | Detection end-to-end smoke: export.py + run.py + `neylo detect-only` — 61 tests pass |
 
 ---
 
@@ -215,7 +217,72 @@ Tests in `tests/test_detection.py` (9): `build_class_map` strategies,
 `parse_results` filtering / clamping / degenerate-drop / shape
 mismatch. **No GPU dependency.**
 
-Total project test count: **48 pass**.
+### ✅ 1.3 Detection end-to-end (no tracking yet)
+
+`neylo/pipeline/export.py`:
+
+- `DETECTIONS_SCHEMA` — explicit pyarrow schema; columns match
+  `DetectionRecord` 1:1, with `class_name` serialized as string for
+  forward compatibility.
+- `write_detections_parquet(records, path)` — materializes the iterable
+  to a `pa.Table` with the explicit schema (works for empty input),
+  writes via tmp-file + atomic rename, creates parent dirs as needed.
+  Returns row count.
+
+`neylo/pipeline/run.py`:
+
+- `DetectorProtocol` — structural type so tests can pass a fake
+  detector without importing ultralytics.
+- `run_detection_only(asset, segment, detector)` — generator. Iterates
+  `FrameStream`, yields the records `detector.detect()` returns per
+  frame. Memory stays flat at one frame at a time.
+
+`neylo/cli/main.py` adds `neylo detect-only`:
+
+- `--input <video>`, `--config configs/pipeline.yaml`,
+  `--output-dir outputs` (default)
+- Probes asset, builds `single_segment`, constructs `YoloConfig` from
+  `pipeline.yaml.detection`, instantiates `YoloDetector`, streams
+  detections to `outputs/<video_id>/detections.parquet`
+- Lazy imports `YoloDetector` so `neylo --version` and other
+  subcommands stay fast and tests don't pull torch/ultralytics
+  unless they need to.
+
+Tests:
+
+- `tests/test_export.py` (4): round-trip read, empty → empty Parquet
+  with schema, parent-dir creation, no `.tmp` leftover.
+- `tests/test_run.py` (3): per-frame yield count via fake detector,
+  empty detector path, lazy-evaluation check.
+- `tests/test_cli.py` (3 new): subcommand registered, missing input
+  exits 2, missing `detection.model_path` exits 2.
+
+**No GPU dependency in any unit test.** GPU verification is the manual
+step below.
+
+Total project test count: **61 pass**.
+
+#### Manual GPU smoke (run in `cv_env`)
+
+```bash
+neylo detect-only \
+  --input "data/Veo highlights ANUFC vs WEFC 23s/3 010545_-_Attack.mp4" \
+  --config configs/pipeline.yaml
+```
+
+First run downloads `yolo11n.pt` (~5 MB) into the working directory.
+Expected output: `outputs/3_010545_attack/detections.parquet` with
+roughly `(visible_players_per_frame) × (n_frames)` rows. Inspect with:
+
+```python
+import pyarrow.parquet as pq
+t = pq.read_table("outputs/3_010545_attack/detections.parquet")
+print(t.num_rows, t.schema.names)
+print(t.to_pandas().describe())
+```
+
+Sanity checks: row count is plausible, `conf` distribution is non-
+trivial (not all 1.0 or 0.0), bboxes lie inside frame bounds, no nulls.
 
 
 
@@ -228,10 +295,10 @@ Planned breakdown (each step independently runnable + testable):
 | ---- | -------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 1.1  | Ingest + Decode: probe `VideoAsset`, frame iterator (OpenCV) ✅                  | `VideoAsset` + `FrameInfo` stream                     |
 | 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                                 | `DetectionRecord[]` per frame                         |
-| 1.3  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`               | `TrackRecord[]` per frame                             |
-| 1.4  | Export: pyarrow Parquet writer + `track_index.json`; annotated MP4 optional flag | `outputs/<job>/{detections.parquet,tracks.parquet,track_index.json}` |
-| 1.5  | CLI wiring: replace `neylo run` stub with the 1.1–1.4 chain                       | working `neylo run --input <clip>`                    |
-| 1.6  | Smoke test on a real Veo highlight clip from `data/`                              | acceptance: ≥99% frame coverage, parquet readable     |
+| 1.3  | Detection end-to-end smoke (no tracking yet): export + runner + CLI ✅           | `outputs/<video_id>/detections.parquet`               |
+| 1.4  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml`               | `TrackRecord[]` per frame                             |
+| 1.5  | Export tracks: extend `export.py` with `tracks.parquet` + `track_index.json`     | `outputs/<job>/{detections,tracks}.parquet + track_index.json` |
+| 1.6  | CLI wiring: full `neylo run` (replace stub) + smoke on Veo clip                  | acceptance: ≥99% frame coverage, parquet readable     |
 
 **Phase 1 entry-costs:**
 

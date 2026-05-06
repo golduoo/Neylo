@@ -34,6 +34,80 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_yolo_config(detection_cfg: dict):
+    """Convert pipeline.yaml `detection` section to a YoloConfig."""
+    from neylo.services.detection import YoloConfig  # lazy: avoids ultralytics import on every CLI call
+
+    return YoloConfig(
+        model_path=str(detection_cfg["model_path"]),
+        device=str(detection_cfg.get("device", "cuda:0")),
+        conf=float(detection_cfg.get("conf", 0.25)),
+        iou=float(detection_cfg.get("iou", 0.6)),
+        imgsz=int(detection_cfg.get("imgsz", 1280)),
+        half=bool(detection_cfg.get("half", True)),
+    )
+
+
+def cmd_detect_only(args: argparse.Namespace) -> int:
+    """Phase 1.3 smoke: ingest -> decode -> detect -> Parquet.
+
+    No tracking. Validates the GPU inference + Parquet plumbing on a
+    real video before Phase 1.4 adds BoT-SORT.
+    """
+    # Lazy imports keep `neylo --version` and `neylo run-batch` fast,
+    # and avoid forcing torch/ultralytics import in tests that don't need it.
+    from neylo.pipeline import (
+        FrameStream,  # noqa: F401 -- re-exported for completeness
+        probe_video,
+        run_detection_only,
+        single_segment,
+        write_detections_parquet,
+    )
+    from neylo.services.detection import YoloDetector
+
+    input_path = Path(args.input).resolve()
+    config_path = Path(args.config).resolve()
+    output_root = Path(args.output_dir).resolve() if args.output_dir else Path("outputs").resolve()
+
+    if not input_path.is_file():
+        print(f"error: input not found: {input_path}", file=sys.stderr)
+        return 2
+
+    cfg = _load_config(config_path)
+    detection_cfg = cfg.get("detection")
+    if not detection_cfg or "model_path" not in detection_cfg:
+        print("error: pipeline.yaml is missing detection.model_path", file=sys.stderr)
+        return 2
+
+    asset = probe_video(input_path)
+    segment = single_segment(asset)
+    yolo_cfg = _build_yolo_config(detection_cfg)
+
+    print(f"neylo detect-only")
+    print(f"  input:        {input_path}")
+    print(f"  video_id:     {asset.video_id}")
+    print(f"  fps:          {asset.fps:.3f}")
+    print(f"  frames:       {segment.end_frame}")
+    print(f"  resolution:   {asset.width}x{asset.height}")
+    print(f"  model_path:   {yolo_cfg.model_path}")
+    print(f"  device:       {yolo_cfg.device}")
+    print(f"  imgsz / conf: {yolo_cfg.imgsz} / {yolo_cfg.conf}")
+
+    detector = YoloDetector(yolo_cfg)
+
+    out_dir = output_root / asset.video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = out_dir / "detections.parquet"
+
+    n = write_detections_parquet(
+        run_detection_only(asset, segment, detector),
+        parquet_path,
+    )
+    print(f"  wrote:        {parquet_path}")
+    print(f"  rows:         {n}")
+    return 0
+
+
 def cmd_run_batch(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).resolve()
     config_path = Path(args.config).resolve()
@@ -71,6 +145,19 @@ def build_parser() -> argparse.ArgumentParser:
     runb.add_argument("--input-dir", required=True)
     runb.add_argument("--config", default="configs/pipeline.yaml")
     runb.set_defaults(func=cmd_run_batch)
+
+    detect = sub.add_parser(
+        "detect-only",
+        help="Phase 1.3 smoke: detect on a single video and write detections.parquet (no tracking)",
+    )
+    detect.add_argument("--input", required=True, help="path to a video file")
+    detect.add_argument("--config", default="configs/pipeline.yaml")
+    detect.add_argument(
+        "--output-dir",
+        default=None,
+        help="directory for outputs/<video_id>/detections.parquet (default: outputs/)",
+    )
+    detect.set_defaults(func=cmd_detect_only)
 
     return p
 
