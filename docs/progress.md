@@ -378,6 +378,28 @@ Expect: 10–30 unique track ids on a busy football clip; longest tracks
 last most of the clip; many short fragmented tracks if occlusions /
 camera motion are heavy (the latter is what Phase 5 will tune away).
 
+**1.4 GPU smoke result (recorded):** same `3 010545_-_Attack.mp4` clip:
+
+- **8304 rows / 390 frames / 32 unique track ids**
+- median track length: 361 frames (out of 390 — ~93% of the clip)
+- top 10 track ids all ≥ 385 frames — i.e. main on-pitch players have
+  fully stable identities throughout the clip
+- min track length: 1 frame (transient false-positive "ghost" tracks)
+
+Two observations:
+
+- **No tracker warmup gap.** `track_high_thresh=0.25` /
+  `new_track_thresh=0.25` are aggressive: every detection gets an id
+  immediately. That's why row count matches detection-only almost
+  exactly. Phase 5 may raise these thresholds to filter transient
+  ids — at the cost of ~1–2 frames of latency on legitimate new
+  tracks.
+- **32 unique ids vs. ~23 expected on-pitch people.** The extra
+  ~9 ids come from sideline people the COCO `person` class still
+  matches (coaches, spectators). Phase 4 single-class fine-tuning
+  on football-only data will cut these dramatically without
+  touching the tracker.
+
 
 
 End-to-end shortest path on a single 10–20 s clip:
