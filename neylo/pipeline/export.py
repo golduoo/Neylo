@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -121,3 +123,63 @@ def write_tracks_parquet(
     table = pa.Table.from_pylist(rows, schema=TRACKS_SCHEMA)
     _atomic_write_parquet(table, path, compression)
     return len(rows)
+
+
+def build_track_index(records: Iterable[TrackRecord]) -> dict[int, dict[str, Any]]:
+    """Compute a per-track summary for fast UI / API lookup.
+
+    The web UI needs `GET /api/v1/jobs/{id}/tracks` to populate the
+    track-list panel without scanning the full Parquet. This index
+    provides everything that panel needs: track id, class, frame range,
+    timestamp range, and total frame count.
+
+    Iterates `records` once, groups by `track_id`. Records do not need
+    to be sorted: first/last frame are tracked via min/max so the
+    function is order-independent.
+    """
+    index: dict[int, dict[str, Any]] = {}
+    for r in records:
+        tid = r.track_id
+        if tid not in index:
+            index[tid] = {
+                "track_id": tid,
+                "class": r.class_name.value,
+                "first_frame": r.frame_id,
+                "last_frame": r.frame_id,
+                "first_timestamp_ms": r.timestamp_ms,
+                "last_timestamp_ms": r.timestamp_ms,
+                "n_frames": 1,
+            }
+            continue
+
+        entry = index[tid]
+        entry["n_frames"] += 1
+        if r.frame_id < entry["first_frame"]:
+            entry["first_frame"] = r.frame_id
+            entry["first_timestamp_ms"] = r.timestamp_ms
+        if r.frame_id > entry["last_frame"]:
+            entry["last_frame"] = r.frame_id
+            entry["last_timestamp_ms"] = r.timestamp_ms
+    return index
+
+
+def write_track_index(
+    index: dict[int, dict[str, Any]],
+    path: Path,
+) -> int:
+    """Write the track index as JSON. JSON object keys are stringified
+    track ids (JSON has no int keys); values are unchanged.
+
+    Atomic write: tmp file then rename, so partial files are never
+    visible on disk.
+    """
+    path = Path(path)
+    serializable = {str(k): v for k, v in index.items()}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(serializable, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return len(index)

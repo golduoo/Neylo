@@ -38,7 +38,10 @@ results.
 | `c24824f` | plan  | Pivot: single-class `player`, add Backend API + Web UI as v1 surface |
 | `a4572f3` | plan  | Lock external dataset; propagate single-class across all plan docs |
 | `363f01a` | 1.3   | Detection end-to-end smoke: export.py + run.py + `neylo detect-only` — 61 tests pass |
-| _next_    | 1.4   | BoT-SORT tracking: configs/botsort.yaml + tracking service + `neylo track-only` — 75 tests pass |
+| `2859307` | 1.4   | BoT-SORT tracking: configs/botsort.yaml + tracking service + `neylo track-only` — 75 tests pass |
+| `1a1c3fb` | —     | Untrack stray test.py from previous commit |
+| `493ebab` | 1.4   | Record GPU smoke results (8304 rows / 32 tracks / median 361 frames) |
+| _next_    | 1.5   | Track index: build_track_index + write_track_index — 84 tests pass |
 
 ---
 
@@ -400,6 +403,27 @@ Two observations:
   on football-only data will cut these dramatically without
   touching the tracker.
 
+### ✅ 1.5 Track index
+
+`neylo/pipeline/export.py`:
+
+- `build_track_index(records)` — pure function. Walks records once,
+  groups by `track_id`, computes `first_frame` / `last_frame` /
+  `first_timestamp_ms` / `last_timestamp_ms` / `n_frames` / `class`.
+  Order-independent (uses min/max).
+- `write_track_index(index, path)` — atomic JSON write. Track ids
+  are stringified for JSON compatibility (no int keys in JSON).
+
+The Phase 2 API uses this to satisfy `GET /api/v1/jobs/{id}/tracks`
+without scanning the full Parquet. Frontend reads the whole file
+once on entering the player screen (a few KB even for long videos).
+
+Tests in `tests/test_export.py` (9 added): empty, single-track,
+multi-frame, multi-track, order-independence, JSON round-trip,
+parent-dir creation, no .tmp leftover, empty dict serialization.
+
+Total project test count: **84 pass**.
+
 
 
 End-to-end shortest path on a single 10–20 s clip:
@@ -413,7 +437,7 @@ Planned breakdown (each step independently runnable + testable):
 | 1.2  | Detection service: ultralytics YOLO11 wrapper ✅                                 | `DetectionRecord[]` per frame                         |
 | 1.3  | Detection end-to-end smoke (no tracking yet): export + runner + CLI ✅           | `outputs/<video_id>/detections.parquet`               |
 | 1.4  | Tracking service: BoT-SORT via ultralytics, `configs/botsort.yaml` ✅            | `outputs/<video_id>/tracks.parquet`                   |
-| 1.5  | Export tracks: extend `export.py` with `tracks.parquet` + `track_index.json`     | `outputs/<job>/{detections,tracks}.parquet + track_index.json` |
+| 1.5  | Track index: `build_track_index` + `write_track_index` ✅                        | `outputs/<job>/track_index.json` for fast UI/API lookup |
 | 1.6  | CLI wiring: full `neylo run` (replace stub) + smoke on Veo clip                  | acceptance: ≥99% frame coverage, parquet readable     |
 
 **Phase 1 entry-costs:**

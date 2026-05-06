@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -5,7 +6,9 @@ import pyarrow.parquet as pq
 from neylo.pipeline.export import (
     DETECTIONS_SCHEMA,
     TRACKS_SCHEMA,
+    build_track_index,
     write_detections_parquet,
+    write_track_index,
     write_tracks_parquet,
 )
 from neylo.schemas import ClassName, DetectionRecord, TrackRecord
@@ -124,3 +127,97 @@ def test_write_tracks_preserves_stitched_id(tmp_path: Path):
     write_tracks_parquet(records, out)
     rows = pq.read_table(out).to_pylist()
     assert rows[0]["stitched_track_id"] == 99
+
+
+# ---------- track index ----------
+
+def test_track_index_empty():
+    assert build_track_index([]) == {}
+
+
+def test_track_index_single_track_single_frame():
+    idx = build_track_index([_make_track(frame_id=0, track_id=1)])
+    assert set(idx.keys()) == {1}
+    e = idx[1]
+    assert e["track_id"] == 1
+    assert e["class"] == "player"
+    assert e["first_frame"] == e["last_frame"] == 0
+    assert e["first_timestamp_ms"] == e["last_timestamp_ms"] == 0.0
+    assert e["n_frames"] == 1
+
+
+def test_track_index_single_track_multiple_frames():
+    records = [_make_track(frame_id=i, track_id=7) for i in (3, 5, 8, 12)]
+    idx = build_track_index(records)
+    e = idx[7]
+    assert e["first_frame"] == 3
+    assert e["last_frame"] == 12
+    assert e["n_frames"] == 4
+    assert e["first_timestamp_ms"] == 120.0  # 3 * 40
+    assert e["last_timestamp_ms"] == 480.0   # 12 * 40
+
+
+def test_track_index_multiple_tracks():
+    records = [
+        _make_track(0, 1),
+        _make_track(0, 2),
+        _make_track(1, 1),
+        _make_track(1, 2),
+        _make_track(2, 2),  # track 2 outlives track 1
+    ]
+    idx = build_track_index(records)
+    assert idx[1]["n_frames"] == 2
+    assert idx[1]["last_frame"] == 1
+    assert idx[2]["n_frames"] == 3
+    assert idx[2]["last_frame"] == 2
+
+
+def test_track_index_order_independent():
+    """Records arriving in non-frame-order still produce correct extrema."""
+    records = [
+        _make_track(frame_id=10, track_id=1),
+        _make_track(frame_id=2, track_id=1),
+        _make_track(frame_id=7, track_id=1),
+    ]
+    idx = build_track_index(records)
+    e = idx[1]
+    assert e["first_frame"] == 2
+    assert e["last_frame"] == 10
+    assert e["n_frames"] == 3
+
+
+def test_write_track_index_round_trip(tmp_path: Path):
+    records = [_make_track(0, 1), _make_track(1, 1), _make_track(0, 2)]
+    idx = build_track_index(records)
+
+    out = tmp_path / "track_index.json"
+    n = write_track_index(idx, out)
+    assert n == 2
+    assert out.exists()
+
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    # JSON keys are stringified
+    assert set(loaded.keys()) == {"1", "2"}
+    assert loaded["1"]["n_frames"] == 2
+    assert loaded["2"]["track_id"] == 2
+
+
+def test_write_track_index_creates_parent_dirs(tmp_path: Path):
+    out = tmp_path / "nested" / "subdir" / "track_index.json"
+    n = write_track_index({1: {"track_id": 1, "n_frames": 1}}, out)
+    assert n == 1
+    assert out.exists()
+
+
+def test_write_track_index_no_tmp_left_behind(tmp_path: Path):
+    out = tmp_path / "track_index.json"
+    write_track_index({1: {"track_id": 1, "n_frames": 1}}, out)
+    leftover = list(tmp_path.glob("*.tmp"))
+    assert leftover == []
+
+
+def test_write_track_index_empty(tmp_path: Path):
+    out = tmp_path / "track_index.json"
+    n = write_track_index({}, out)
+    assert n == 0
+    assert json.loads(out.read_text(encoding="utf-8")) == {}

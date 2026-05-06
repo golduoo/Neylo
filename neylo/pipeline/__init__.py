@@ -2,7 +2,9 @@ from neylo.pipeline.decode import FrameStream, single_segment
 from neylo.pipeline.export import (
     DETECTIONS_SCHEMA,
     TRACKS_SCHEMA,
+    build_track_index,
     write_detections_parquet,
+    write_track_index,
     write_tracks_parquet,
 )
 from neylo.pipeline.ingest import (
@@ -25,6 +27,7 @@ __all__ = [
     "FrameStream",
     "TRACKS_SCHEMA",
     "TrackerProtocol",
+    "build_track_index",
     "discover_videos",
     "make_video_id",
     "probe_video",
@@ -32,5 +35,6 @@ __all__ = [
     "run_tracking",
     "single_segment",
     "write_detections_parquet",
+    "write_track_index",
     "write_tracks_parquet",
 ]
