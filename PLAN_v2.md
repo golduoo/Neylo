@@ -85,21 +85,35 @@ UI 上能稳定完成"上传 → 选人 → 跟随播放"的完整闭环。
 - 中场、远景、多人密集移动、长时间连续 possession 数据不足。
 - 这些数据足够做 baseline 与微调，但不足以单独证明“整场比赛 tracking 稳定”。
 
-### 3.2 公开数据集策略
+### 3.2 公开数据集策略（v1 锁定 Roboflow ball-player-gk-scoreboard-ref）
 
-使用公开足球数据集增强 detection 泛化能力：
+v1 训练数据来自一个已下载到本地的 Roboflow 数据集：
 
-- SoccerNet
-- Roboflow football/soccer datasets
-- 其他公开视频标注数据
+| 字段 | 取值 |
+| --- | --- |
+| Slug | `ball-player-gk-scoreboard-ref` |
+| 来源 | Roboflow Universe（Xiwen 已本地下载） |
+| 图片量 | ~11000 |
+| 源类别 | `ball`, `player`, `goalkeeper`, `scoreboard`（4 类） |
+| 格式 | YOLO（Roboflow 导出） |
+| License | 允许商用（Xiwen 2026-05-07 确认） |
+| 域分布 | Veo 风格 + 电视转播混合 |
+| 本地路径 | `data/external/ball-player-gk-scoreboard-ref/` |
 
-公开数据的用途：
+**v1 类别重映射**：训练时把源类映射到单类 `player`：
 
-- detection 预训练或联合训练
-- 增加不同场地、光照、相机视角、球衣颜色样本
-- 辅助验证检测模型泛化
+| 源类 | v1 处理 |
+| --- | --- |
+| `player` | → `player` |
+| `goalkeeper` | → `player`（合并） |
+| `ball` | 丢弃（v2 用专用小目标模型 + SAHI） |
+| `scoreboard` | 丢弃（v1 不关心场外元素） |
 
-公开数据不作为最终 tracking 验收依据。
+混合域（Veo + 电视）有助泛化，但电视转播部分与 Veo 之间存在 sim-to-real gap。Phase 4 后期可能需要在 Veo clip 上做 200–500 帧的人工标注做 final fine-tune。
+
+权威细节见 `docs/requirements/data.md`。
+
+不再依赖 SoccerNet 或其他公开集（数据足够，避免多源混合复杂化）。
 
 ### 3.3 Neylo 自有数据策略
 
@@ -114,21 +128,13 @@ Neylo Veo 数据用于：
 
 - tracking 稳定性高度依赖真实部署视频的画质、压缩、Veo pan/tilt、遮挡方式和球衣相似度。
 
-### 3.5 标签合并（v1 决策）
+### 3.5 单类 player 决策（v1）
 
-当前 train 集标签分布：
+v1 检测器只输出单类 `player`。
 
-| 原标签 | 实例数 | v1 处理 |
-| --- | --- | --- |
-| player-white | 41418 | → `player` |
-| ball | 2110 | 丢弃（v2 单独的小目标模型） |
-| another-player | 131 | → `player` |
-| Keeper | 33 | → `player` |
-| referee | 16 | 丢弃 |
+历史背景：早期评估的 Veo 标签分布 (player-white=41418, ball=2110, another-player=131, Keeper=33, referee=16) 严重不均衡，goalkeeper + referee 合计 49 条实例不足以训练区分能力。这个评估之后，训练数据源切换到 Roboflow `ball-player-gk-scoreboard-ref`（11k 图片，见 §3.2），但单类策略保持不变 — 其本身已经足够 v1 的"上传 → 选人 → 跟随"交互闭环。
 
-合并理由：keeper + referee + another-player 合计 180 条实例，远不足以训练区分能力，强行多类只会让模型对稀有类过拟合或低置信。v1 用单类 `player`，所有"场上人员"统一为 player；ball 在 v2 用 SAHI + 专用模型处理；referee 等比赛角色识别推迟。
-
-对应代码：`neylo.schemas.ClassName` 已收敛到 `PLAYER` 单值；`build_class_map` 简化为只查 `player` 名字（COCO 预训练时回退到 `person → player`）。
+对应代码：`neylo.schemas.ClassName` 已收敛到 `PLAYER` 单值；`build_class_map` 简化为只查 `player` 名字（COCO 预训练时回退到 `person → player`，微调权重直接按名字匹配）。
 
 ### 3.4 数据请求
 
@@ -150,7 +156,7 @@ local video
   -> detect people
   -> track people
   -> optional offline stitching
-  -> export parquet + annotated mp4
+  -> export parquet + track_index.json (annotated mp4 optional)
 ```
 
 v1 使用轻量实现：
@@ -275,36 +281,36 @@ stitched_track_id
 
 ### 7.1 类别
 
-v1 只检测：
+v1 检测器只输出单类：
 
 - `player`
-- `goalkeeper`
-- `referee`
 
-取消：
+不在 v1 范围（推迟到 v2）：
 
-- `ball`
+- `ball`（独立小目标模型 + SAHI）
+- `goalkeeper` / `referee` 等角色细分（数据驱动决策，详见 §3.5）
 
 ### 7.2 模型路线
 
-baseline：
+baseline（Phase 1.3）：
 
-- YOLO11 模型直接跑通 pipeline。
+- 直接用 COCO 预训练 `yolo11n.pt` 跑通 pipeline，不训练。
 
-训练路线：
+微调（Phase 4）：
 
-1. 使用公开足球数据集训练或预训练。
-2. 使用 Neylo Veo 数据微调。
-3. 按视频划分 train/val/test，避免 frame-level leakage。
-4. 主动学习：挑选低置信度、误检、漏检样本回标。
+1. 主训练源：Roboflow `ball-player-gk-scoreboard-ref`（11k 图，§3.2）
+2. 训练前类别合并（player + goalkeeper → player；ball / scoreboard 丢弃）
+3. 按 Roboflow 自带 train/valid/test 划分
+4. 后期可选：在 Veo clip 上人工标注 200–500 帧做二次微调，缩小域差
+5. 主动学习：挑选低置信度、漏检、误检样本回标
 
 ### 7.3 推理策略
 
 优先级：
 
-1. 普通 YOLO inference 跑通 end-to-end。
-2. 再评估高分辨率推理。
-3. 最后再加入 SAHI 处理远端小目标。
+1. 普通 YOLO inference 跑通 end-to-end（Phase 1.3）
+2. 微调后切换到 yolo11m / yolo11l + 高分辨率
+3. SAHI 仅在 v2（ball 检测）启用
 
 不要一开始就把 SAHI 和 TensorRT 作为 pipeline 必需项。
 
@@ -312,9 +318,9 @@ baseline：
 
 初始目标：
 
-- `player` mAP@0.5 > 0.90
-- `goalkeeper/referee` 单独统计，但不阻塞早期 pipeline baseline
-- 漏检和误检必须通过 annotated MP4 人工抽检记录
+- `player` mAP@0.5 > 0.90 在外部数据集 test split 上
+- `player` mAP@0.5 > 0.85 在 Veo holdout 上（如果做了人工标注）
+- 漏检和误检通过 web UI 或 CLI overlay 视频人工抽检记录
 
 ---
 
@@ -322,11 +328,7 @@ baseline：
 
 ### 8.1 Tracking 对象
 
-Detection 可以区分：
-
-- `player`
-- `goalkeeper`
-- `referee`
+Detection 在 v1 只输出单类 `player`。
 
 Tracking 主逻辑可以先统一视为：
 
@@ -502,19 +504,21 @@ source_track_id
 stitched_track_id
 ```
 
-### 10.2 MP4 可视化
+### 10.2 MP4 可视化（可选）
 
-annotated MP4 必须显示：
+v1 主交付是 web UI（前端实时渲染原视频 + overlay），不依赖标注 MP4。
+annotated MP4 仅作为 CLI 的可选导出（`--export-video` flag），用于：
+
+- 在没有 UI 的环境下快速人工抽检
+- 写报告 / 给非技术 stakeholder 看
+
+如果导出，必须显示：
 
 - bbox
 - track_id
-- class_name
 - optional confidence
 
-颜色策略：
-
-- 同一个 track_id 使用稳定颜色。
-- 不同类别可以使用不同边框样式或标签前缀。
+颜色策略：同一个 track_id 使用稳定颜色（v1 单类，不需要按类区分）。
 
 ---
 
@@ -553,8 +557,9 @@ annotated MP4 必须显示：
 Milestone 1：Local Baseline
 
 - 输入 10-20 秒 clip
-- 输出 annotated MP4 + Parquet
+- 输出 `detections.parquet` + `tracks.parquet` + `track_index.json`
 - YOLO + tracking 跑通
+- annotated MP4 仅在 CLI 加 flag 时导出（可选）
 
 Milestone 2：Robust Clip Pipeline
 
@@ -648,9 +653,9 @@ Milestone 3：Long Segment Tracking
 
 | 风险 | 缓解 |
 |------|------|
-| 当前 Neylo 数据偏高光 | 用公开数据增强 detection，向公司请求连续片段 |
-| 公开数据不能代表 Veo tracking | tracking 验收以 Neylo Veo 视频为主 |
-| goalkeeper/referee 类别不稳定 | tracking 内部统一 person_on_pitch，导出保留类别 |
+| 当前 Neylo 数据未标注且偏高光 | 用 Roboflow 11k 数据集训练 detection（§3.2），向公司请求连续片段 |
+| 公开数据与 Veo 域差 | 训练集已混合 Veo + 电视转播；后期可在 Veo 上人工标 200–500 帧二次微调 |
+| 单类 player 限制信息粒度 | 已接受为 v1 决策（§3.5）；UI 通过点选满足"跟人"需求，不依赖角色分类 |
 | camera pan/tilt 导致 ID 漂移 | BoT-SORT 开启 CMC |
 | 遮挡导致 track fragmentation | ReID + track_buffer + offline stitching |
 | 一开始工程栈过重拖慢 CV 迭代 | 先 CLI/local filesystem，保留扩展边界 |
@@ -660,15 +665,17 @@ Milestone 3：Long Segment Tracking
 
 ## 14. 最终建议
 
-v1 的成功不应该定义为“完整足球智能分析系统”。  
+v1 的成功不应该定义为"完整足球智能分析系统"。
 v1 应该定义为：
 
 ```text
 给定一段 Neylo Veo 足球视频，
-系统可以稳定检测场上人员，
-在连续片段内给出可检查、可导出、可评估的 track_id，
-并输出 Parquet + annotated MP4。
+用户可以在浏览器里上传、播放、点击任意一个球员，
+看到该球员的检测框跟随播放，
+其他球员的检测框可隐藏；
+系统在后台稳定输出 Parquet + track_index 供查询。
+CLI 作为非 UI 入口产出同样的工件。
 ```
 
-这条路线更容易完成，也更适合后续扩展到企业级 pipeline。
+这条路线最直接对应用户感知到的"产品价值"，也最容易后续扩展到企业级 pipeline 和多用户系统。
 

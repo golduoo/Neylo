@@ -23,10 +23,12 @@ Xiwen
 ## Outputs
 
 - stage metadata for each `(video_id, segment_id, stage_name)`
-- detection outputs per segment
-- tracking outputs per segment
-- final Parquet file with per-frame object tracks
-- annotated MP4 with bbox, class label, confidence, and track_id
+- `detections.parquet` — per-frame detections
+- `tracks.parquet` — per-frame tracks
+- `track_index.json` — `{ track_id: { first_frame, last_frame, n_frames, class } }`
+  for fast UI / API lookup
+- annotated MP4 — optional CLI export only (`--export-video` flag).
+  The web UI does not consume this; it overlays on the original video.
 
 ## Core Components
 
@@ -68,8 +70,9 @@ Responsibilities:
 
 Responsibilities:
 
-- write final Parquet
-- render annotated MP4
+- write `detections.parquet` and `tracks.parquet`
+- write `track_index.json` for UI/API consumption
+- render annotated MP4 only when CLI is invoked with `--export-video`
 - save summary JSON with counts, timing, warnings, and config hash
 
 ## Data Contracts

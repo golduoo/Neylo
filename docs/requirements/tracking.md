@@ -53,18 +53,16 @@ For v1, `track_id` only needs to be stable within the match or processed video, 
 
 Requirements:
 
-- prioritize `player`, `goalkeeper`, and `referee` tracking stability
+- track all detected `player` instances with stable IDs across the
+  segment (v1 is single-class — see `docs/requirements/data.md`)
 - handle short occlusions and dense player clusters
 - preserve IDs through camera pan/tilt when possible
-- expose tracker parameters in YAML
+- expose tracker parameters in `configs/botsort.yaml` (referenced from
+  `configs/pipeline.yaml`)
 
 ## Ball Tracking
 
-v1 ball tracking can be simpler:
-
-- ByteTrack or lightweight association is acceptable
-- Kalman filtering can be used
-- perfect ball ID stability is not required for v1
+Out of v1 scope. Will land in v2 alongside the dedicated ball detector.
 
 ## Offline Tracklet Stitching
 

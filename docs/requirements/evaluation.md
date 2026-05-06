@@ -8,17 +8,23 @@ The most important v1 question is: can Neylo detect every player and keep stable
 
 ## Detection Metrics
 
+v1 is single-class; metrics are reported for `player` only.
+
 Track:
 
-- mAP@0.5 for `player`, `goalkeeper`, `referee`, `ball`
-- recall for `ball`
+- mAP@0.5 for `player`
+- mAP@0.5:0.95 for `player`
 - false positives per minute
 - missed players per sampled frame
 
 Initial targets:
 
-- player mAP@0.5 greater than 0.90
-- ball recall greater than 0.70
+- player mAP@0.5 greater than 0.90 on the external dataset's `test` split
+  (`ball-player-gk-scoreboard-ref`, see `docs/requirements/data.md`)
+- player mAP@0.5 greater than 0.85 on a small Veo holdout (added in
+  late Phase 4 if domain gap is observed)
+
+Ball / goalkeeper / referee metrics are out of v1 scope.
 
 ## Tracking Metrics
 
@@ -71,8 +77,8 @@ Use a 10-20s sample video.
 Assert:
 
 - pipeline completes
-- Parquet is readable
-- annotated MP4 exists
+- `detections.parquet` and `tracks.parquet` are readable
+- `track_index.json` is valid
 - frame count is plausible
 - required columns exist
 
@@ -80,9 +86,9 @@ Assert:
 
 For every major model or tracker change:
 
-- export annotated video
+- export overlay video (or render via the web UI)
 - inspect 10 challenging clips
-- note ID switches, missed players, false positives, and ball misses
+- note ID switches, missed players, false positives
 
 ## Regression Set
 
@@ -98,10 +104,14 @@ Maintain a small curated regression set:
 
 Before considering v1 complete:
 
-- detection model has validation metrics
-- tracking has at least one annotated visual QA pass
-- full pipeline can run on a sample video
-- Parquet output schema is stable
-- annotated MP4 is readable
+- detection model has validation metrics on both the external dataset
+  test split and a Veo holdout (if labeled)
+- tracking has at least one visual QA pass on Veo footage via the
+  web UI
+- full pipeline can run end-to-end on a sample video via both CLI
+  (`neylo run`) and the FastAPI endpoint (`POST /api/v1/jobs`)
+- Parquet schemas (`detections`, `tracks`) are stable and documented
+- web UI completes the upload → process → select track → playback
+  loop on at least 3 clips without manual intervention
 - known failure cases are documented
 
