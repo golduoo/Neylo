@@ -49,3 +49,8 @@ web/.env.production.local
 
 # Backend uploads (FastAPI) — see Phase 2
 uploads/
+
+# Ad-hoc scripts at repo root (rename to scripts/<name>.py to track)
+/test.py
+/scratch*.py
+/tmp_*.py
