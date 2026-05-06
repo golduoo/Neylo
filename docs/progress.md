@@ -17,7 +17,7 @@ results.
 | Phase | Scope                                                        | Status        |
 | ----- | ------------------------------------------------------------ | ------------- |
 | 0     | 项目骨架: env, configs, Pydantic schemas, CLI                  | ✅ Done       |
-| 1     | CLI 最小闭环: ingest → detect → track → Parquet + 帧/track 索引 | 🟡 In progress (1.1, 1.2 done) |
+| 1     | CLI 最小闭环: ingest → detect → track → Parquet + 帧/track 索引 | ✅ Done       |
 | **2** | **Backend API (FastAPI): upload / job status / frame & track queries** | ⏳ Pending |
 | **3** | **Frontend Web UI (Vite + React + TS + Tailwind + shadcn/ui)** | ⏳ Pending  |
 | 4     | 数据与训练: 单类 player 微调                                  | ⏳ Pending   |
@@ -487,6 +487,20 @@ Expected three artifacts under `outputs/3_010545_attack/`:
 If counts roughly match the standalone `detect-only` and `track-only`
 runs from 1.3 / 1.4 GPU smokes, **Phase 1 is complete** and the
 foundation for Phase 2 (Backend API) and Phase 3 (Web UI) is in place.
+
+**Phase 1 acceptance smoke (recorded):** `3 010545_-_Attack.mp4` →
+
+| Artifact                | Phase 1.6 unified `neylo run` | Phase 1.3 / 1.4 standalone |
+| ----------------------- | ----------------------------- | -------------------------- |
+| `detections.parquet`    | **8304 rows**                  | 8304 rows (`detect-only`)  |
+| `tracks.parquet`        | **8304 rows**                  | 8304 rows (`track-only`)   |
+| `track_index.json`      | **32 tracks**                  | 32 tracks                  |
+
+Numbers match exactly across the three run modes — single-inference
+unified pipeline produces the same outputs as the two standalone
+runners, so the architectural decision in 1.6 is validated.
+
+**🎯 Phase 1 closed.** Phase 2 (Backend API) is unblocked.
 
 
 
